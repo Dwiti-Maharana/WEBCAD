@@ -1,0 +1,2459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MiniCAD - Geographic Coordinate System</title>
+
+<!-- Leaflet CSS & JS (for map functionality) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+<!-- JSZip for KMZ export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+  :root{
+    --bg:#212830;--panel:#2c3440;--panel2:#3a4552;--text:#e6e9ef;--muted:#9aa4b2;--accent:#4da3ff;--osnap-marker:#00ff80;
+    --grip-active: #ff3b30;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial; overflow: hidden;}
+  .app{display:grid;grid-template-rows:auto 1fr 22px;grid-template-columns:260px 1fr;grid-template-areas:"toolbar toolbar" "sidebar canvas" "status status";height:100%}
+  .toolbar{grid-area:toolbar;display:flex;flex-wrap: wrap;gap:8px;align-items:center;padding:6px 8px;background:linear-gradient(180deg,var(--panel),#282f3a);border-bottom:1px solid #1a1f26;position:sticky;top:0;z-index:15}
+  .toolbar button,.toolbar .toggle{border:1px solid #4a5766;background:var(--panel2);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
+  .toolbar button.active{outline:2px solid var(--accent);}
+  .toolbar button:hover{background:#4e5a6e;}
+  .sidebar{grid-area:sidebar;display:flex;flex-direction:column;gap:10px;padding:10px;background:var(--panel);border-right:1px solid #1a1f26;overflow:auto}
+  .card{background:var(--panel2);border:1px solid #4a5766;border-radius:14px;padding:10px}
+  .card h3{margin:0 0 8px;font-size:14px;color:#c0d2ff}
+  .row{display:flex;align-items:center;justify-content:space-between;margin:6px 0; gap: 8px;}
+  .row input[type="color"], .row input[type="number"], .row select, .row input[type="text"] {background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px; flex: 1;}
+  .row input[readonly] { background: #1a1f26; color: var(--muted); }
+  .row select:disabled, .row input:disabled { background: #1a1f26; color: var(--muted); cursor: not-allowed; }
+  .row label { flex-shrink: 0; width: 70px; }
+  #newLayerName { flex: 1; min-width: 0; background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px; }
+  #layers .layer-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  #layers .layer-row span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+  #layers .layer-row input[type=checkbox] { width: 16px; height: 16px; }
+
+  /* Modelspace Area */
+  .canvas-wrap{grid-area:canvas;position:relative;background:#0b0e14;overflow:hidden; cursor: default;}
+  #map{position:absolute;inset:0;z-index:0;background:#1b1f26;}
+  canvas#cad{position:absolute;inset:0;z-index:1;display:block; background-color: transparent; pointer-events: auto;}
+
+  /* Command Line */
+  .commandline-wrap { position:absolute; left: 10px; bottom: 10px; right: 10px; z-index:10; }
+  .command-history { background: rgba(30, 37, 46, 0.9); border:1px solid #4a5766; border-bottom: none; padding: 4px 8px; font-size: 13px; color: var(--muted); max-height: 100px; overflow-y: auto; display: none;}
+  .commandline{display: flex; background:rgba(44, 52, 64, 0.95); border:1px solid #4a5766;border-radius:10px;padding: 8px 10px;}
+  #prompt { color:#cbd5e1; white-space: pre;}
+  .cmd-input {flex:1; background:transparent; border:none; outline:none; color:var(--text); font-family: ui-monospace,monospace; font-size: 14px;}
+
+  /* Status Bar */
+  .status{grid-area:status;display:flex;justify-content:space-between;align-items:center;padding:2px 8px;border-top:1px solid #1a1f26;background:#1e252e;color:var(--muted);font-size:12px; z-index: 16;}
+  .status-chip{cursor:pointer; display:inline-flex;align-items:center;gap:6px;padding:1px 8px;border:1px solid transparent;border-radius:8px;}
+  .status-chip.active{background:var(--accent);color:#fff; border-color:transparent;}
+  .status-chip:hover{border-color:var(--muted);}
+  .sep{height:24px;width:1px;background:#4a5766;margin:0 6px}
+  .tooltip{position:fixed; pointer-events:none; background:#0b0f18e0; border:1px solid #4a5766; border-radius:8px; padding:4px 8px; font-size:12px; color:#b6c2cf; z-index:20; white-space: nowrap;}
+
+  /* Context Menu */
+  .context-menu {
+      position: fixed;
+      z-index: 1000;
+      background: var(--panel);
+      border: 1px solid #4a5766;
+      border-radius: 8px;
+      padding: 5px 0;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      display: none;
+      min-width: 150px;
+  }
+  .context-menu button {
+      display: block;
+      width: 100%;
+      padding: 8px 15px;
+      text-align: left;
+      border: none;
+      background: none;
+      color: var(--text);
+      cursor: pointer;
+  }
+  .context-menu button:hover {
+      background-color: var(--accent);
+      color: #fff;
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <div class="toolbar" id="toolbar">
+       <!-- Drawing Commands -->
+      <button data-command="line" title="Line (L)">Line</button>
+      <button data-command="polyline" title="Polyline (PL)">Polyline</button>
+      <button data-command="circle" title="Circle (C)">Circle</button>
+      <button data-command="rect" title="Rectangle (REC)">Rect</button>
+      <button data-command="text" title="Text (T)">Text</button>
+      <div class="sep"></div>
+       <!-- Modify Commands -->
+      <button data-command="erase" title="Erase (E)">Erase</button>
+      <button data-command="move" title="Move (M)">Move</button>
+      <button data-command="copy" title="Copy (CO)">Copy</button>
+      <button data-command="rotate" title="Rotate (RO)">Rotate</button>
+      <button data-command="scale" title="Scale (SC)">Scale</button>
+      <button data-command="stretch" title="Stretch (S)">Stretch</button>
+      <button data-command="mirror" title="Mirror (MI)">Mirror</button>
+      <button data-command="offset" title="Offset (O)">Offset</button>
+      <button data-command="array" title="Array (AR)">Array</button>
+      <div class="sep"></div>
+      <!-- Advanced Modify -->
+      <button data-command="trim" title="Trim (TR)">Trim</button>
+      <button data-command="extend" title="Extend (EX)">Extend</button>
+      <button data-command="break" title="Break (BR)">Break</button>
+      <button data-command="join" title="Join (J)">Join</button>
+      <button data-command="fillet" title="Fillet (F)">Fillet</button>
+      <button data-command="chamfer" title="Chamfer (CHA)">Chamfer</button>
+      <button data-command="lengthen" title="Lengthen (LEN)">Lengthen</button>
+      <button data-command="explode" title="Explode (X)">Explode</button>
+      <button data-command="matchprop" title="Match Properties (MA)">Matchprop</button>
+      <div class="sep"></div>
+      <button data-command="getaddress" title="Get Address (ADDR)">Get Address</button>
+      <div class="sep"></div>
+      <button id="toggleMapBtn" title="Toggle Map Tiles">Toggle Map</button>
+      <div class="sep"></div>
+      <input type="text" id="searchCoordsInput" placeholder="Search for a location..." style="background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px;width:220px;">
+      <button id="searchCoordsBtn">Search</button>
+      <div class="sep"></div>
+      <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
+      <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
+       <div class="sep"></div>
+      <button id="saveBtn" title="Save Drawing (JSON)">Save</button>
+      <button id="openBtn" title="Open Drawing (JSON)">Open</button>
+      <input type="file" id="fileInput" accept=".json" style="display: none;" />
+      <div class="sep"></div>
+      <button id="exportKmzBtn" title="Export as KMZ">Export KMZ</button>
+      <button id="exportDxfBtn" title="Export as DXF (for AutoCAD)">Export DXF</button>
+    </div>
+
+    <div class="sidebar">
+      <div class="card">
+        <h3>Properties</h3>
+        <div class="row"><label>Selection</label><input type="text" id="propType" value="No selection" readonly></div>
+        <div class="row"><label>Layer</label><select id="propLayer"></select></div>
+        <div class="row"><label>Color</label><input type="color" id="propColor" value="#e6e9ef" /></div>
+      </div>
+      <div class="card">
+        <h3>Layers</h3>
+        <div id="layers"></div>
+        <div class="row"><input id="newLayerName" placeholder="New layer name" /> <button id="addLayerBtn">Add</button></div>
+      </div>
+    </div>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <div id="map"></div>
+      <canvas id="cad"></canvas>
+      <div class="tooltip" id="tooltip" style="display:none"></div>
+      <div class="commandline-wrap">
+          <div class="command-history" id="commandHistory"></div>
+          <div class="commandline">
+              <span id="prompt">Command: </span>
+              <input class="cmd-input" id="cmd" autocomplete="off" />
+          </div>
+      </div>
+    </div>
+
+    <div class="context-menu" id="contextMenu">
+        <!-- Menu items will be added here dynamically -->
+    </div>
+
+
+    <div class="status">
+      <div id="cursorPos">0.00000, 0.00000</div>
+      <div>
+        <span class="status-chip" id="gridToggle" title="Toggle Grid (F7)">Grid</span>
+        <span class="status-chip" id="orthoToggle" title="Toggle Ortho (F8)">Ortho</span>
+        <span class="status-chip active" id="osnapToggle" title="Toggle Object Snap (F3)">Osnap</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  // --- DOM ELEMENTS ---
+  const canvas = document.getElementById('cad');
+  const ctx = canvas.getContext('2d');
+  const cmdInput = document.getElementById('cmd');
+  const promptEl = document.getElementById('prompt');
+  const tooltip = document.getElementById('tooltip');
+  const cursorPosEl = document.getElementById('cursorPos');
+  const layersDiv = document.getElementById('layers');
+  const layerSelect = document.getElementById('propLayer');
+  const colorInput = document.getElementById('propColor');
+  const typeInput = document.getElementById('propType');
+  const mapContainer = document.getElementById('map');
+  const fileInput = document.getElementById('fileInput');
+  const contextMenu = document.getElementById('contextMenu');
+
+
+  // --- GLOBAL STATE ---
+  const state = {
+    ents: [],
+    layers: [{name:'0', color:'#e6e9ef', visible:true, locked:false}],
+    currentLayer: '0',
+    selection: [],
+    history: [],
+    future: [],
+    grid: true,
+    ortho: false,
+    osnap: true,
+    mouse: {x:0, y:0, worldX:0, worldY:0, isDown:false, isPanning:false, lastX:0, lastY:0, lastClickTime: 0},
+    activeCommand: null,
+    commandHistory: [],
+    lastCommand: null,
+    snapPoint: null,
+    activeGrip: null, // { entId: number, ptIndex: number, originalEnt: object }
+    selectionBox: null, // { start: {x,y}, end: {x,y}, type: 'window'|'crossing' }
+    clipboard: { data: [], basePoint: null },
+  };
+  let nextId = 1;
+  let leafletMap = null;
+  let mapTileLayer = null;
+  let isMapVisible = false;
+
+  // --- INITIALIZATION ---
+  function init() {
+      resize();
+      initMap();
+      bindEvents();
+      refreshLayersUI();
+      updatePropertiesPanel();
+      updateStatusBar();
+      snapshot();
+      toggleMap();
+      draw();
+      cmdInput.focus();
+  }
+
+  function initMap() {
+    leafletMap = L.map('map', {
+        zoomControl: false,
+        attributionControl: false,
+    }).setView([40.7128, -74.0060], 13);
+
+    mapTileLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
+        maxZoom: 21,
+        subdomains:['mt0','mt1','mt2','mt3'],
+        attribution: '&copy; Google Maps'
+    });
+
+    leafletMap.on('move', draw);
+    leafletMap.on('zoom', draw);
+  }
+
+  // =======================================================
+  // SECTION: COORDINATE SYSTEM & GEOMETRY
+  // =======================================================
+  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+  const distScreen = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
+
+  function screenToWorld(p) {
+      if (!leafletMap) return { x: 0, y: 0 };
+      const latLng = leafletMap.containerPointToLatLng([p.x, p.y]);
+      return { x: latLng.lng, y: latLng.lat };
+  }
+
+  function worldToScreen(p) {
+      if (!leafletMap) return { x: 0, y: 0 };
+      const screenPoint = leafletMap.latLngToContainerPoint([p.y, p.x]);
+      return screenPoint;
+  }
+
+  function getDestinationPoint(startPoint, distance, bearing) {
+    const R = 6378137; // Earth's radius in meters
+    const lat1 = startPoint.y * Math.PI/180;
+    const lon1 = startPoint.x * Math.PI/180;
+    const brng = bearing * Math.PI/180;
+
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance/R) +
+                          Math.cos(lat1) * Math.sin(distance/R) * Math.cos(brng));
+    const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(distance/R) * Math.cos(lat1),
+                                 Math.cos(distance/R) - Math.sin(lat1) * Math.sin(lat2));
+
+    return { y: lat2 * 180/Math.PI, x: (lon2 * 180/Math.PI + 540) % 360 - 180 };
+  }
+
+  function orthoPoint(from, to) {
+    const fromScreen = worldToScreen(from);
+    const toScreen = worldToScreen(to);
+    const dx = Math.abs(toScreen.x - fromScreen.x);
+    const dy = Math.abs(toScreen.y - fromScreen.y);
+    if (dx > dy) {
+        return screenToWorld({ x: toScreen.x, y: fromScreen.y });
+    } else {
+        return screenToWorld({ x: fromScreen.x, y: toScreen.y });
+    }
+  }
+
+  function transformPoints(ent, transformFunc) {
+      if (ent.type === 'line') {
+          ent.a = transformFunc(ent.a);
+          ent.b = transformFunc(ent.b);
+      } else if (ent.type === 'circle') {
+          ent.c = transformFunc(ent.c);
+      } else if (ent.type === 'polyline') {
+          ent.pts = ent.pts.map(transformFunc);
+      } else if (ent.type === 'text') {
+          ent.insertionPoint = transformFunc(ent.insertionPoint);
+      }
+  }
+
+    function closestPointOnLineScreen(p, a, b) {
+        const atob = { x: b.x - a.x, y: b.y - a.y };
+        const atop = { x: p.x - a.x, y: p.y - a.y };
+        const len = atob.x * atob.x + atob.y * atob.y;
+        if (len === 0) return a;
+        let t = (atop.x * atob.x + atop.y * atob.y) / len;
+        t = Math.max(0, Math.min(1, t));
+        return { x: a.x + atob.x * t, y: a.y + atob.y * t, t: t };
+    }
+
+    function intersectLineLineScreen(p1, p2, p3, p4, extendLines = false) {
+        const d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
+        if (Math.abs(d) < 1e-9) return null; // Parallel or collinear
+        const t = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
+        const u = ((p2.x - p1.x) * (p1.y - p3.y) - (p2.y - p1.y) * (p1.x - p3.x)) / d;
+
+        if (!extendLines && (t < -1e-9 || t > 1 + 1e-9 || u < -1e-9 || u > 1 + 1e-9)) {
+            return null; // No intersection on segments
+        }
+        return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+    }
+
+    function reflectPointScreen(p, p1, p2) {
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        if(dx === 0 && dy === 0) return p;
+        const a = (dx * dx - dy * dy) / (dx * dx + dy * dy);
+        const b = 2 * dx * dy / (dx * dx + dy * dy);
+        const x = a * (p.x - p1.x) + b * (p.y - p1.y) + p1.x;
+        const y = b * (p.x - p1.x) - a * (p.y - p1.y) + p1.y;
+        return { x, y };
+    }
+
+  // =======================================================
+  // SECTION: CORE COMMAND ENGINE
+  // =======================================================
+
+  const commands = {
+    'line': { alias: 'l', execute: startLineCommand, prompt: "Specify first point:" },
+    'circle': { alias: 'c', execute: startCircleCommand, prompt: "Specify center point:" },
+    'rect': { alias: 'rec', execute: startRectCommand, prompt: "Specify first corner:" },
+    'polyline': { alias: 'pl', execute: startPolylineCommand, prompt: "Specify start point:" },
+    'text': { alias: 't', execute: startTextCommand, prompt: "Specify insertion point:" },
+    'erase': { alias: 'e', execute: startEraseCommand, prompt: "Select objects:" },
+    'offset': { alias: 'o', execute: startOffsetCommand, prompt: "Specify offset distance:" },
+    'move': { alias: 'm', execute: startMoveCommand, prompt: "Specify base point:" },
+    'copy': { alias: 'co', execute: startCopyCommand, prompt: "Specify base point:" },
+    'paste': { alias: 'paste', execute: startPasteCommand, prompt: "Specify insertion point:" },
+    'rotate': { alias: 'ro', execute: startRotateCommand, prompt: "Specify base point:" },
+    'scale': { alias: 'sc', execute: startScaleCommand, prompt: "Specify base point:" },
+    'getaddress': { alias: 'addr', execute: startGetAddressCommand, prompt: "Select a closed polyline or specify a point:" },
+    'mirror': { alias: 'mi', execute: startMirrorCommand, prompt: "Specify first point of mirror line:" },
+    'stretch': { alias: 's', execute: startStretchCommand, prompt: "Select objects to stretch by crossing-window..." },
+    'trim': { alias: 'tr', execute: startTrimCommand, prompt: "Select cutting edges... Then press Enter." },
+    'extend': { alias: 'ex', execute: startExtendCommand, prompt: "Select boundary edges... Then press Enter." },
+    'fillet': { alias: 'f', execute: startFilletCommand, prompt: "Specify fillet radius:" },
+    'chamfer': { alias: 'cha', execute: startChamferCommand, prompt: "Specify first chamfer distance:" },
+    'join': { alias: 'j', execute: startJoinCommand, prompt: "Select source object:" },
+    'explode': { alias: 'x', execute: startExplodeCommand, prompt: "Select objects to explode:" },
+    'matchprop': { alias: 'ma', execute: startMatchpropCommand, prompt: "Select source object:" },
+    'break': { alias: 'br', execute: startBreakCommand, prompt: "Select object to break:" },
+    'lengthen': { alias: 'len', execute: startLengthenCommand, prompt: "Enter delta distance:" },
+    'array': { alias: 'ar', execute: startArrayCommand, prompt: "Enter number of rows:" },
+  };
+
+  function runCommand(cmdStr) {
+    cancelGripEdit(); // Always cancel grip edit when a new command starts
+    if (!cmdStr) { if(state.lastCommand) runCommand(state.lastCommand.name); return; }
+    const args = cmdStr.toLowerCase().trim().split(' ');
+    const cmdName = args[0];
+    let command, officialName;
+    for(const name in commands) { if(name === cmdName || commands[name].alias === cmdName) { command = commands[name]; officialName = name; break; } }
+
+    if (command){
+        logToHistory(`Command: ${officialName}`);
+        state.activeCommand = { name: officialName, step: 0, data: {}, prompt: command.prompt };
+        if (officialName !== 'paste') state.lastCommand = state.activeCommand;
+        setPrompt(command.prompt);
+        command.execute();
+        draw();
+    } else { logToHistory(`Unknown command "${cmdName}".`); }
+  }
+
+  function completeCommand() { state.activeCommand = null; clearSelection(); setPrompt("Command: "); draw(); }
+  function cancelCommand() { if(state.activeCommand) logToHistory("*Cancel*"); state.activeCommand = null; clearSelection(); cancelGripEdit(); setPrompt("Command: "); draw(); }
+  function setPrompt(text) { promptEl.textContent = text ? `${text} ` : "Command: "; if (text) showTooltip(text); else hideTooltip(); }
+  function logToHistory(text) { const historyEl = document.getElementById('commandHistory'); historyEl.style.display = 'block'; historyEl.innerHTML += `<div>${text}</div>`; historyEl.scrollTop = historyEl.scrollHeight; }
+
+  // =======================================================
+  // SECTION: SPECIFIC COMMAND IMPLEMENTATIONS
+  // =======================================================
+   function startTextCommand() {
+    const cmd = state.activeCommand;
+    cmd.execute = () => {
+        switch (cmd.step) {
+            case 0:
+                const pt = getPointInput();
+                if (pt) {
+                    const textString = prompt("Enter text:", "");
+                    if (textString) {
+                        pushEnt({
+                            type: 'text',
+                            insertionPoint: pt,
+                            textString: textString,
+                            height: 14,
+                            layer: state.currentLayer,
+                            props: curProps()
+                        });
+                    }
+                    completeCommand();
+                }
+                break;
+        }
+    };
+  }
+
+  async function fetchAndPlaceAddress(point) {
+    logToHistory("Fetching address...");
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${point.y}&lon=${point.x}&zoom=18&addressdetails=1`;
+    try {
+        const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (!response.ok) throw new Error('Network error');
+        const data = await response.json();
+
+        if (data && data.display_name) {
+            const address = data.display_name;
+            logToHistory(`Address found: ${address}`);
+            pushEnt({
+                type: 'text',
+                insertionPoint: point,
+                textString: address,
+                height: 14, // Text height in pixels
+                layer: state.currentLayer,
+                props: curProps()
+            });
+        } else {
+            logToHistory("Could not retrieve address for this location.");
+        }
+    } catch (error) {
+        logToHistory(`Error fetching address: ${error.message}`);
+        console.error("Reverse geocoding failed:", error);
+    }
+  }
+
+  function startGetAddressCommand() {
+    const cmd = state.activeCommand;
+    cmd.execute = async () => {
+        let targetPoint = null;
+        const hit = hitTest(getPointInput(true));
+
+        if (hit && hit.type === 'polyline' && hit.closed) {
+            let avgX = 0, avgY = 0;
+            const uniquePts = hit.pts.slice(0, -1);
+            for (const pt of uniquePts) {
+                avgX += pt.x;
+                avgY += pt.y;
+            }
+            targetPoint = { x: avgX / uniquePts.length, y: avgY / uniquePts.length };
+            logToHistory("Polyline selected. Fetching address for its centroid.");
+        } else {
+            targetPoint = getPointInput();
+            logToHistory("Point selected. Fetching address.");
+        }
+
+        if (targetPoint) {
+            await fetchAndPlaceAddress(targetPoint);
+        }
+        completeCommand();
+    };
+  }
+
+  function startLineCommand() {
+    const cmd = state.activeCommand;
+    cmd.execute = () => {
+      switch (cmd.step) {
+        case 0: const pt = getPointInput(); if (pt) { cmd.data.start = pt; setPrompt("Specify next point:"); cmd.step++; } break;
+        case 1: const endPt = getPointInput(); if (endPt) { pushEnt({type:'line', a:cmd.data.start, b:endPt, layer:state.currentLayer, props:curProps()}); cmd.data.start = endPt; } break;
+      }
+    };
+  }
+
+  function startCircleCommand() {
+      const cmd = state.activeCommand;
+      cmd.execute = () => {
+          switch (cmd.step) {
+              case 0: const center = getPointInput(); if (center) { cmd.data.center = center; setPrompt("Specify radius of circle:"); cmd.step++; } break;
+              case 1:
+                  const radiusPt = getPointInput();
+                  if (radiusPt) {
+                      const centerLatLng = L.latLng(cmd.data.center.y, cmd.data.center.x);
+                      const radiusPtLatLng = L.latLng(radiusPt.y, radiusPt.x);
+                      const radiusInMeters = centerLatLng.distanceTo(radiusPtLatLng);
+                      pushEnt({type:'circle', c:cmd.data.center, r:radiusInMeters, layer:state.currentLayer, props:curProps()});
+                      completeCommand();
+                  }
+                  break;
+          }
+      };
+  }
+
+  function startRectCommand() {
+    const cmd = state.activeCommand;
+    cmd.execute = () => {
+        switch (cmd.step) {
+            case 0: const c1 = getPointInput(); if(c1) { cmd.data.start = c1; setPrompt("Specify other corner point:"); cmd.step++; } break;
+            case 1:
+                const c2 = getPointInput();
+                if(c2) {
+                    const p1 = cmd.data.start; const p3 = c2;
+                    const p2 = { x: p3.x, y: p1.y }; const p4 = { x: p1.x, y: p3.y };
+                    pushEnt({type:'polyline', pts:[p1,p2,p3,p4,p1], closed: true, layer:state.currentLayer, props:curProps()});
+                    completeCommand();
+                }
+                break;
+        }
+    };
+  }
+
+  function startPolylineCommand() {
+      const cmd = state.activeCommand;
+      cmd.data.points = [];
+
+      const updatePolyPrompt = () => {
+          if (cmd.data.points.length === 0) {
+              setPrompt("Specify start point:");
+          } else if (cmd.data.points.length > 1) {
+              setPrompt("Specify next point or [Close/Undo]:");
+          } else {
+              setPrompt("Specify next point or [Undo]:");
+          }
+      };
+
+      cmd.execute = () => {
+          const pt = getPointInput();
+          if (pt) {
+              cmd.data.points.push(pt);
+              updatePolyPrompt();
+          }
+      };
+
+      cmd.processSubCommand = (input) => {
+          const option = input.toLowerCase().trim();
+          if (option === 'c' && cmd.data.points.length > 2) {
+              const finalPoints = [...cmd.data.points, cmd.data.points[0]];
+              pushEnt({type: 'polyline', pts: finalPoints, closed: true, layer: state.currentLayer, props: curProps()});
+              logToHistory("Polyline closed.");
+              completeCommand();
+          } else if (option === 'u' && cmd.data.points.length > 0) {
+              cmd.data.points.pop();
+              logToHistory("Last segment undone.");
+              updatePolyPrompt();
+              draw();
+          } else if (option === '') {
+              if (cmd.data.points.length > 1) {
+                  pushEnt({type:'polyline', pts: cmd.data.points, closed: false, layer: state.currentLayer, props: curProps()});
+              }
+              completeCommand();
+          } else {
+              logToHistory(`Unknown option "${option}".`);
+          }
+      };
+
+      updatePolyPrompt();
+  }
+
+
+  function startEraseCommand() {
+      if (state.selection.length > 0) {
+          deleteSelection();
+      } else {
+         logToHistory("Nothing selected to erase.");
+      }
+      completeCommand();
+  }
+
+  // =======================================================
+  // SECTION: FIXED & IMPLEMENTED COMMANDS
+  // =======================================================
+
+  function startOffsetCommand() {
+      const cmd = state.activeCommand;
+      cmd.data = {};
+
+      cmd.processInput = (input) => {
+          if (cmd.step === 0) {
+              const dist = parseFloat(input);
+              if (!isNaN(dist)) {
+                  cmd.data.distance = dist; // Keep original meters for circle
+                  // Convert meters to pixels for visual consistency on screen
+                  const mapScale = leafletMap.getZoomScale(leafletMap.getZoom());
+                  const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
+                  cmd.data.pixelDistance = Math.abs(dist / metersPerPixel);
+
+                  logToHistory(`Offset distance: ${dist}m`);
+                  setPrompt("Select object to offset:");
+                  cmd.step = 1;
+              } else {
+                  logToHistory(`Invalid distance "${input}".`);
+                  setPrompt("Specify offset distance:");
+              }
+          }
+      };
+
+      cmd.execute = () => {
+          if (cmd.step === 1) {
+              const hit = hitTest(getPointInput(true));
+              if (hit) {
+                  cmd.data.selectedEnt = hit;
+                  logToHistory("Object selected.");
+                  setPrompt("Specify point on side to offset:");
+                  cmd.step = 2;
+              }
+          } else if (cmd.step === 2) {
+              const sidePoint = getPointInput();
+              const sourceEnt = cmd.data.selectedEnt;
+              if (!sourceEnt) { cancelCommand(); return; }
+
+              let newEnt = null;
+
+              if (sourceEnt.type === 'circle') {
+                  const sidePoint_s = worldToScreen(sidePoint);
+                  const center_s = worldToScreen(sourceEnt.c);
+                  const distToCenter = distScreen(sidePoint_s, center_s);
+                  const edgeW = getDestinationPoint(sourceEnt.c, sourceEnt.r, 0);
+                  const edgeS = worldToScreen(edgeW);
+                  const radius_s = distScreen(center_s, edgeS);
+                  const sign = distToCenter > radius_s ? 1 : -1;
+                  newEnt = {
+                      type: 'circle', c: sourceEnt.c,
+                      r: sourceEnt.r + (cmd.data.distance * sign),
+                      layer: sourceEnt.layer, props: { ...sourceEnt.props }
+                  };
+              } else if (sourceEnt.type === 'line' || sourceEnt.type === 'polyline') {
+                  const pts = sourceEnt.type === 'line' ? [sourceEnt.a, sourceEnt.b] : sourceEnt.pts;
+                  const pts_s = pts.map(worldToScreen);
+                  const newPts_w = [];
+                  const offset_s = cmd.data.pixelDistance;
+
+                  // Determine side using the first segment
+                  const sidePoint_s = worldToScreen(sidePoint);
+                  const normal = { x: pts_s[1].y - pts_s[0].y, y: pts_s[0].x - pts_s[1].x };
+                  const mouseVec = { x: sidePoint_s.x - pts_s[0].x, y: sidePoint_s.y - pts_s[0].y };
+                  const side = (mouseVec.x * normal.x + mouseVec.y * normal.y) > 0 ? 1 : -1;
+
+                  const offsetSegments = [];
+                  for (let i = 0; i < pts_s.length - 1; i++) {
+                      const p1 = pts_s[i], p2 = pts_s[i+1];
+                      const d = distScreen(p1, p2);
+                      if (d < 1e-6) continue;
+                      const nx = (p2.y - p1.y) / d * side;
+                      const ny = (p1.x - p2.x) / d * side;
+                      offsetSegments.push([
+                          { x: p1.x + offset_s * nx, y: p1.y + offset_s * ny },
+                          { x: p2.x + offset_s * nx, y: p2.y + offset_s * ny }
+                      ]);
+                  }
+
+                  if (offsetSegments.length === 0) { cancelCommand(); return; }
+
+                  const finalPts_s = [offsetSegments[0][0]];
+                  for (let i = 0; i < offsetSegments.length - 1; i++) {
+                      const s1 = offsetSegments[i]; const s2 = offsetSegments[i+1];
+                      const intersection = intersectLineLineScreen(s1[0], s1[1], s2[0], s2[1], true);
+                      if (intersection) { finalPts_s.push(intersection); }
+                      else { finalPts_s.push(s1[1]); } // Parallel, just add the point
+                  }
+                  finalPts_s.push(offsetSegments[offsetSegments.length - 1][1]);
+                  
+                  newEnt = {
+                      type: sourceEnt.type === 'line' ? 'line' : 'polyline',
+                      layer: sourceEnt.layer, props: { ...sourceEnt.props }
+                  };
+                  if(newEnt.type === 'line') {
+                      newEnt.a = screenToWorld(finalPts_s[0]);
+                      newEnt.b = screenToWorld(finalPts_s[1]);
+                  } else {
+                      newEnt.pts = finalPts_s.map(screenToWorld);
+                      newEnt.closed = sourceEnt.closed || false;
+                  }
+              }
+
+              if (newEnt) {
+                  pushEnt(newEnt);
+              } else {
+                  logToHistory("Offset for this entity type is not yet implemented.");
+              }
+
+              logToHistory("Offset complete.");
+              setPrompt("Select object to offset or press Enter to exit:");
+              cmd.data.selectedEnt = null;
+              cmd.step = 1;
+              draw();
+          }
+      };
+      cmd.processSubCommand = (input) => { if (input.trim() === '') completeCommand(); }
+  }
+
+
+  function startFilletCommand() {
+      const cmd = state.activeCommand;
+      cmd.data = { radius: 0 };
+      cmd.processInput = (input) => {
+          if (cmd.step === 0) {
+              const r = parseFloat(input);
+              if (!isNaN(r) && r >= 0) {
+                  cmd.data.radius = r;
+                  const mapScale = leafletMap.getZoomScale(leafletMap.getZoom());
+                  const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
+                  cmd.data.pixelRadius = r / metersPerPixel;
+                  logToHistory(`Fillet radius: ${r}m`);
+                  setPrompt("Select first object to fillet:");
+                  cmd.step = 1;
+              } else {
+                  logToHistory("Invalid radius.");
+                  cancelCommand();
+              }
+          }
+      };
+      cmd.execute = () => {
+          const hit = hitTest(getPointInput(true));
+          if (!hit || (hit.type !== 'line' && hit.type !== 'polyline')) return;
+          if (cmd.step === 1) {
+              cmd.data.ent1 = hit;
+              setPrompt("Select second object to fillet:");
+              cmd.step = 2;
+          } else if (cmd.step === 2) {
+              cmd.data.ent2 = hit;
+              performFillet(cmd.data.ent1, cmd.data.ent2, cmd.data.pixelRadius, false);
+              completeCommand();
+          }
+      };
+  }
+
+  function startChamferCommand() {
+      const cmd = state.activeCommand;
+      cmd.data = { d1: 0, d2: 0 };
+      cmd.processInput = (input) => {
+          const d = parseFloat(input);
+          if (isNaN(d) || d < 0) { logToHistory("Invalid distance."); return; }
+          const mapScale = leafletMap.getZoomScale(leafletMap.getZoom());
+          const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
+
+          if (cmd.step === 0) {
+              cmd.data.d1 = d;
+              cmd.data.pixel_d1 = d / metersPerPixel;
+              logToHistory(`First distance: ${d}m`);
+              setPrompt("Specify second chamfer distance:");
+              cmd.step = 1;
+          } else if (cmd.step === 1) {
+              cmd.data.d2 = d;
+              cmd.data.pixel_d2 = d / metersPerPixel;
+              logToHistory(`Second distance: ${d}m`);
+              setPrompt("Select first line:");
+              cmd.step = 2;
+          }
+      };
+      cmd.execute = () => {
+          const hit = hitTest(getPointInput(true));
+          if (!hit || (hit.type !== 'line' && hit.type !== 'polyline')) return;
+          if (cmd.step === 2) {
+              cmd.data.ent1 = hit;
+              setPrompt("Select second line:");
+              cmd.step = 3;
+          } else if (cmd.step === 3) {
+              cmd.data.ent2 = hit;
+              performFillet(cmd.data.ent1, cmd.data.ent2, {d1: cmd.data.pixel_d1, d2: cmd.data.pixel_d2}, true);
+              completeCommand();
+          }
+      };
+  }
+
+  function performFillet(ent1, ent2, radiusOrDist, isChamfer) {
+      if (ent1.id === ent2.id) { logToHistory("Cannot fillet/chamfer an object with itself."); return; }
+      
+      const l1 = ent1.type === 'line' ? {p1: ent1.a, p2: ent1.b} : {p1: ent1.pts[0], p2: ent1.pts[1]}; // Simplified for demo
+      const l2 = ent2.type === 'line' ? {p1: ent2.a, p2: ent2.b} : {p1: ent2.pts[0], p2: ent2.pts[1]}; // Needs improvement for multi-segment polylines
+
+      const p1_s = worldToScreen(l1.p1), p2_s = worldToScreen(l1.p2);
+      const p3_s = worldToScreen(l2.p1), p4_s = worldToScreen(l2.p2);
+
+      const intersection = intersectLineLineScreen(p1_s, p2_s, p3_s, p4_s, true);
+      if (!intersection) { logToHistory("Lines are parallel, cannot proceed."); return; }
+
+      const v1 = { x: p2_s.x - p1_s.x, y: p2_s.y - p1_s.y }; const len1 = Math.hypot(v1.x, v1.y); v1.x /= len1; v1.y /= len1;
+      const v2 = { x: p4_s.x - p3_s.x, y: p4_s.y - p3_s.y }; const len2 = Math.hypot(v2.x, v2.y); v2.x /= len2; v2.y /= len2;
+
+      // Make vectors point away from intersection
+      if (distScreen(p1_s, intersection) > distScreen(p2_s, intersection)) { v1.x *= -1; v1.y *= -1; }
+      if (distScreen(p3_s, intersection) > distScreen(p4_s, intersection)) { v2.x *= -1; v2.y *= -1; }
+
+      if (isChamfer) {
+          const { d1, d2 } = radiusOrDist;
+          const cp1 = { x: intersection.x + v1.x * d1, y: intersection.y + v1.y * d1 };
+          const cp2 = { x: intersection.x + v2.x * d2, y: intersection.y + v2.y * d2 };
+          
+          pushEnt({ type: 'line', a: screenToWorld(cp1), b: screenToWorld(cp2), layer: ent1.layer, props: { ...ent1.props }});
+          
+          // Trim original lines (simplified)
+          if (distScreen(p1_s, intersection) > distScreen(p2_s, intersection)) ent1.a = screenToWorld(cp1); else ent1.b = screenToWorld(cp1);
+          if (distScreen(p3_s, intersection) > distScreen(p4_s, intersection)) ent2.a = screenToWorld(cp2); else ent2.b = screenToWorld(cp2);
+
+          logToHistory("Chamfer complete.");
+
+      } else { // Fillet
+          const radius = radiusOrDist;
+          const angle = Math.acos(v1.x * v2.x + v1.y * v2.y);
+          if (Math.abs(angle) < 1e-6) { logToHistory("Lines are collinear."); return; }
+          const distToTangent = radius / Math.tan(angle / 2);
+          
+          const t1 = { x: intersection.x + v1.x * distToTangent, y: intersection.y + v1.y * distToTangent };
+          const t2 = { x: intersection.x + v2.x * distToTangent, y: intersection.y + v2.y * distToTangent };
+          
+          const bisector = { x: v1.x + v2.x, y: v1.y + v2.y }; const lenB = Math.hypot(bisector.x, bisector.y); bisector.x /= lenB; bisector.y /= lenB;
+          const distToCenter = radius / Math.sin(angle/2);
+          const center = { x: intersection.x + bisector.x * distToCenter, y: intersection.y + bisector.y * distToCenter };
+
+          // Correct center side
+          const crossProduct = v1.x * v2.y - v1.y * v2.x;
+          if (crossProduct < 0) { // Assuming screen coords: +y is down
+              const bisector_perp = {x: -bisector.y, y: bisector.x};
+              const check_side_v = {x: v1.x-v2.x, y: v1.y-v2.y};
+              if(bisector_perp.x*check_side_v.x + bisector_perp.y*check_side_v.y < 0){
+                  center.x = intersection.x - bisector.x * distToCenter;
+                  center.y = intersection.y - bisector.y * distToCenter;
+              }
+          }
+
+          const startAngle = Math.atan2(t1.y - center.y, t1.x - center.x);
+          const endAngle = Math.atan2(t2.y - center.y, t2.x - center.x);
+
+          const arcPts_s = [];
+          const segments = 20;
+          let angleDiff = endAngle - startAngle;
+          if (crossProduct > 0 && angleDiff < 0) angleDiff += Math.PI * 2;
+          if (crossProduct < 0 && angleDiff > 0) angleDiff -= Math.PI * 2;
+          
+          for (let i = 0; i <= segments; i++) {
+              const ang = startAngle + (angleDiff * i) / segments;
+              arcPts_s.push({ x: center.x + radius * Math.cos(ang), y: center.y + radius * Math.sin(ang) });
+          }
+          
+          pushEnt({ type: 'polyline', pts: arcPts_s.map(screenToWorld), closed: false, layer: ent1.layer, props: { ...ent1.props }});
+          
+          if (distScreen(p1_s, intersection) > distScreen(p2_s, intersection)) ent1.a = screenToWorld(t1); else ent1.b = screenToWorld(t1);
+          if (distScreen(p3_s, intersection) > distScreen(p4_s, intersection)) ent2.a = screenToWorld(t2); else ent2.b = screenToWorld(t2);
+
+          logToHistory("Fillet complete.");
+      }
+      snapshot();
+      draw();
+  }
+
+  function startMoveCommand(isCopy = false) {
+      if (state.selection.length === 0) {
+          logToHistory("No objects selected.");
+          completeCommand();
+          return;
+      }
+      const cmd = state.activeCommand;
+      cmd.data.isCopy = isCopy;
+
+      cmd.execute = () => {
+          switch (cmd.step) {
+              case 0:
+                  const basePt = getPointInput();
+                  if (basePt) {
+                      cmd.data.base = basePt;
+                      setPrompt("Specify second point:");
+                      cmd.step++;
+                  }
+                  break;
+              case 1:
+                  const secondPt = getPointInput();
+                  if (secondPt) {
+                      const dx = secondPt.x - cmd.data.base.x;
+                      const dy = secondPt.y - cmd.data.base.y;
+                      const moveFunc = p => ({ x: p.x + dx, y: p.y + dy });
+
+                      if (cmd.data.isCopy) {
+                          for (const id of state.selection) {
+                              const originalEnt = state.ents.find(e => e.id === id);
+                              if (!originalEnt) continue;
+                              const newEnt = JSON.parse(JSON.stringify(originalEnt));
+                              delete newEnt.id; // ensure pushEnt assigns a new one
+                              transformPoints(newEnt, moveFunc);
+                              pushEnt(newEnt);
+                          }
+                          logToHistory(`${state.selection.length} object(s) copied.`);
+                      } else {
+                          for (const id of state.selection) {
+                              const ent = state.ents.find(e => e.id === id);
+                              if (ent) transformPoints(ent, moveFunc);
+                          }
+                          logToHistory(`${state.selection.length} object(s) moved.`);
+                      }
+                      snapshot();
+                      completeCommand();
+                  }
+                  break;
+          }
+      };
+  }
+
+  function startCopyCommand() {
+      startMoveCommand(true);
+  }
+
+  function startPasteCommand() {
+      if (state.clipboard.data.length === 0) {
+          logToHistory("Clipboard is empty.");
+          completeCommand();
+          return;
+      }
+      const cmd = state.activeCommand;
+      cmd.execute = () => {
+          const insertionPoint = getPointInput();
+          if (insertionPoint) {
+              const { data: clipboardEnts, basePoint } = state.clipboard;
+              const dx = insertionPoint.x - basePoint.x;
+              const dy = insertionPoint.y - basePoint.y;
+              const moveFunc = p => ({ x: p.x + dx, y: p.y + dy });
+              const newSelection = [];
+
+              for (const ent of clipboardEnts) {
+                  const newEnt = JSON.parse(JSON.stringify(ent));
+                  delete newEnt.id;
+                  transformPoints(newEnt, moveFunc);
+                  const pushed = pushEnt(newEnt);
+                  newSelection.push(pushed.id);
+              }
+
+              state.selection = newSelection;
+              logToHistory(`${clipboardEnts.length} object(s) pasted.`);
+              snapshot();
+              updatePropertiesPanel();
+              completeCommand();
+          }
+      };
+  }
+
+
+  function startTransformCommand(type) {
+      if (state.selection.length === 0) {
+          logToHistory("No objects selected.");
+          completeCommand();
+          return;
+      }
+      const cmd = state.activeCommand;
+      cmd.data.type = type;
+
+      cmd.execute = () => {
+          switch (cmd.step) {
+              case 0:
+                  const basePt = getPointInput();
+                  if (basePt) {
+                      cmd.data.base = basePt;
+                      const promptText = type === 'rotate' ? "Specify reference point for angle:" : "Specify reference point for scale:";
+                      setPrompt(promptText);
+                      cmd.step++;
+                  }
+                  break;
+              case 1:
+                  const refPt = getPointInput();
+                  if (refPt) {
+                      cmd.data.ref = refPt;
+                       const promptText = type === 'rotate' ? "Specify new angle:" : "Specify new distance:";
+                      setPrompt(promptText);
+                      cmd.step++;
+                  }
+                  break;
+              case 2:
+                  const destPt = getPointInput();
+                  if (destPt) {
+                      const base_s = worldToScreen(cmd.data.base);
+                      const ref_s = worldToScreen(cmd.data.ref);
+                      const dest_s = worldToScreen(destPt);
+
+                      const v_ref = { x: ref_s.x - base_s.x, y: ref_s.y - base_s.y };
+                      const v_dest = { x: dest_s.x - base_s.x, y: dest_s.y - base_s.y };
+                      const len_ref = Math.hypot(v_ref.x, v_ref.y);
+                      const len_dest = Math.hypot(v_dest.x, v_dest.y);
+
+                      if (len_ref < 1e-6) {
+                          logToHistory("Reference and base points are too close.");
+                          cancelCommand();
+                          return;
+                      }
+
+                      const scaleFactor = (cmd.data.type === 'scale') ? (len_dest / len_ref) : 1.0;
+                      const angleRad = (cmd.data.type === 'rotate') ? (Math.atan2(v_dest.y, v_dest.x) - Math.atan2(v_ref.y, v_ref.x)) : 0.0;
+                      const cosA = Math.cos(angleRad);
+                      const sinA = Math.sin(angleRad);
+
+                      const transformFunc = (p_world) => {
+                          const p_s = worldToScreen(p_world);
+                          const dx = p_s.x - base_s.x;
+                          const dy = p_s.y - base_s.y;
+                          const scaled_dx = dx * scaleFactor;
+                          const scaled_dy = dy * scaleFactor;
+                          const new_dx = scaled_dx * cosA - scaled_dy * sinA;
+                          const new_dy = scaled_dx * sinA + scaled_dy * cosA;
+                          return screenToWorld({ x: base_s.x + new_dx, y: base_s.y + new_dy });
+                      };
+
+                      for (const id of state.selection) {
+                          const ent = state.ents.find(e => e.id === id);
+                          if (!ent) continue;
+                          transformPoints(ent, transformFunc);
+                          if (ent.type === 'circle' && cmd.data.type === 'scale') {
+                              ent.r *= scaleFactor;
+                          }
+                      }
+
+                      snapshot();
+                      logToHistory(`${state.selection.length} object(s) transformed.`);
+                      completeCommand();
+                  }
+                  break;
+          }
+      };
+  }
+
+  function startRotateCommand() { startTransformCommand('rotate'); }
+  function startScaleCommand() { startTransformCommand('scale'); }
+    // =======================================================
+    // SECTION: NEWLY ADDED & FIXED COMMANDS
+    // =======================================================
+
+    function startMirrorCommand() {
+        if (state.selection.length === 0) { logToHistory("No objects selected."); completeCommand(); return; }
+        const cmd = state.activeCommand;
+        cmd.execute = () => {
+            switch (cmd.step) {
+                case 0:
+                    const p1 = getPointInput();
+                    if (p1) { cmd.data.p1 = p1; setPrompt("Specify second point of mirror line:"); cmd.step++; }
+                    break;
+                case 1:
+                    const p2 = getPointInput();
+                    if (p2) {
+                        const p1_s = worldToScreen(cmd.data.p1);
+                        const p2_s = worldToScreen(p2);
+
+                        const transformFunc = (p_world) => {
+                            const p_s = worldToScreen(p_world);
+                            const reflected_s = reflectPointScreen(p_s, p1_s, p2_s);
+                            return screenToWorld(reflected_s);
+                        };
+
+                        state.selection.forEach(id => {
+                            const originalEnt = state.ents.find(e => e.id === id);
+                            if (!originalEnt) return;
+                            const newEnt = JSON.parse(JSON.stringify(originalEnt));
+                            delete newEnt.id;
+                            transformPoints(newEnt, transformFunc);
+                            pushEnt(newEnt);
+                        });
+                        logToHistory(`${state.selection.length} object(s) mirrored.`);
+                        snapshot();
+                        completeCommand();
+                    }
+                    break;
+            }
+        };
+    }
+
+    function startStretchCommand() {
+        const cmd = state.activeCommand;
+        cmd.execute = () => {
+            if (cmd.step === 0) {
+                logToHistory("Use a crossing window (right to left) to select vertices to stretch.");
+                state.selectionBox = { start: null, end: null, type: 'crossing', isForStretch: true };
+                setPrompt("Specify first corner:");
+                cmd.step = 1;
+            } else if (cmd.step === 2) { // Base point
+                const basePt = getPointInput();
+                if (basePt) {
+                    cmd.data.base = basePt;
+                    setPrompt("Specify second point:");
+                    cmd.step++;
+                }
+            } else if (cmd.step === 3) { // Displacement point
+                const secondPt = getPointInput();
+                if (secondPt) {
+                    const dx = secondPt.x - cmd.data.base.x;
+                    const dy = secondPt.y - cmd.data.base.y;
+
+                    for (const { ent, vertices } of cmd.data.vertsToStretch) {
+                        const moveFunc = p => ({ x: p.x + dx, y: p.y + dy });
+                        if (ent.type === 'line') {
+                            if(vertices.includes(0)) ent.a = moveFunc(ent.a);
+                            if(vertices.includes(1)) ent.b = moveFunc(ent.b);
+                        } else if (ent.type === 'polyline') {
+                            ent.pts.forEach((pt, index) => {
+                                if (vertices.includes(index)) ent.pts[index] = moveFunc(pt);
+                            });
+                        }
+                    }
+                    snapshot();
+                    completeCommand();
+                }
+            }
+        };
+    }
+
+    function startExplodeCommand() {
+        if (state.selection.length === 0) { logToHistory("No objects selected."); completeCommand(); return; }
+        let explodedCount = 0;
+        const toDelete = [];
+        const newLines = [];
+        state.selection.forEach(id => {
+            const ent = state.ents.find(e => e.id === id);
+            if (ent && ent.type === 'polyline' && ent.pts.length > 1) {
+                for (let i = 0; i < ent.pts.length - 1; i++) {
+                    newLines.push({ type: 'line', a: ent.pts[i], b: ent.pts[i + 1], layer: ent.layer, props: { ...ent.props } });
+                }
+                toDelete.push(id);
+                explodedCount++;
+            }
+        });
+
+        if (explodedCount > 0) {
+            state.ents = state.ents.filter(e => !toDelete.includes(e.id));
+            newLines.forEach(l => pushEnt(l));
+            snapshot();
+            logToHistory(`${explodedCount} object(s) exploded.`);
+        } else {
+            logToHistory("No polylines found in selection to explode.");
+        }
+        completeCommand();
+    }
+
+    function startMatchpropCommand() {
+        const cmd = state.activeCommand;
+        cmd.execute = () => {
+            switch (cmd.step) {
+                case 0:
+                    const sourceHit = hitTest(getPointInput(true));
+                    if (sourceHit) {
+                        cmd.data.sourceLayer = sourceHit.layer;
+                        cmd.data.sourceProps = { ...sourceHit.props };
+                        logToHistory("Source object selected.");
+                        setPrompt("Select destination object(s) or press Enter to exit:");
+                        cmd.step++;
+                    }
+                    break;
+                case 1:
+                    const destHit = hitTest(getPointInput(true));
+                    if (destHit) {
+                        const ent = state.ents.find(e => e.id === destHit.id);
+                        if (ent) {
+                            ent.layer = cmd.data.sourceLayer;
+                            ent.props = { ...ent.props, ...cmd.data.sourceProps };
+                            logToHistory("Properties matched.");
+                            draw();
+                        }
+                    }
+                    break;
+            }
+        };
+        cmd.processSubCommand = (input) => {
+            if (input.trim() === '') completeCommand();
+        }
+    }
+
+    function startJoinCommand() {
+        const cmd = state.activeCommand;
+        cmd.execute = () => {
+            if (cmd.step === 0) {
+                const source = hitTest(getPointInput(true));
+                if (source && (source.type === 'line' || source.type === 'polyline')) {
+                    cmd.data.source = source;
+                    cmd.data.isPoly = source.type === 'polyline';
+                    cmd.data.pts = cmd.data.isPoly ? [...source.pts] : [source.a, source.b];
+                    setPrompt("Select object to join:");
+                    cmd.step = 1;
+                }
+            } else if (cmd.step === 1) {
+                const toJoin = hitTest(getPointInput(true));
+                if (toJoin && toJoin.type === 'line') {
+                    const sourcePts = cmd.data.pts;
+                    const joinPts = [toJoin.a, toJoin.b];
+                    const startPt = sourcePts[0];
+                    const endPt = sourcePts[sourcePts.length - 1];
+                    let joined = false;
+
+                    if (JSON.stringify(endPt) === JSON.stringify(joinPts[0])) {
+                        sourcePts.push(joinPts[1]);
+                        joined = true;
+                    } else if (JSON.stringify(endPt) === JSON.stringify(joinPts[1])) {
+                        sourcePts.push(joinPts[0]);
+                        joined = true;
+                    } else if (JSON.stringify(startPt) === JSON.stringify(joinPts[0])) {
+                        sourcePts.unshift(joinPts[1]);
+                        joined = true;
+                    } else if (JSON.stringify(startPt) === JSON.stringify(joinPts[1])) {
+                        sourcePts.unshift(joinPts[0]);
+                        joined = true;
+                    }
+
+                    if (joined) {
+                        state.ents = state.ents.filter(e => e.id !== cmd.data.source.id && e.id !== toJoin.id);
+                        pushEnt({ type: 'polyline', pts: sourcePts, closed: false, layer: cmd.data.source.layer, props: { ...cmd.data.source.props } });
+                        logToHistory("Objects joined.");
+                        completeCommand();
+                    } else {
+                        logToHistory("Lines are not connected. Cannot join.");
+                        cancelCommand();
+                    }
+                }
+            }
+        };
+    }
+
+    function startBreakCommand() {
+        const cmd = state.activeCommand;
+        cmd.execute = () => {
+            if (cmd.step === 0) {
+                const hit = hitTest(getPointInput(true));
+                if (hit && hit.type === 'line') {
+                    cmd.data.ent = hit;
+                    const breakPt = getPointInput();
+                    const line = cmd.data.ent;
+                    const p1 = line.a;
+                    const p2 = line.b;
+
+                    state.ents = state.ents.filter(e => e.id !== line.id);
+                    pushEnt({ type: 'line', a: p1, b: breakPt, layer: line.layer, props: { ...line.props } });
+                    pushEnt({ type: 'line', a: breakPt, b: p2, layer: line.layer, props: { ...line.props } });
+
+                    logToHistory("Line broken.");
+                    snapshot();
+                    completeCommand();
+                } else if (hit) {
+                    logToHistory("Break command currently only supports lines.");
+                    cancelCommand();
+                }
+            }
+        };
+    }
+
+    function startTrimCommand() {
+        logToHistory("Trim command is not implemented in this version.");
+        completeCommand();
+    }
+    function startExtendCommand() {
+        logToHistory("Extend command is not implemented in this version.");
+        completeCommand();
+    }
+    function startLengthenCommand() {
+        logToHistory("Lengthen command is not implemented in this version.");
+        completeCommand();
+    }
+
+    function startArrayCommand() {
+        if (state.selection.length === 0) { logToHistory("No objects selected."); completeCommand(); return; }
+        const cmd = state.activeCommand;
+        cmd.processInput = (input) => {
+            const num = parseFloat(input);
+            if (isNaN(num)) { logToHistory("Invalid number."); return; }
+            switch (cmd.step) {
+                case 0:
+                    cmd.data.rows = parseInt(num);
+                    setPrompt("Enter number of columns:");
+                    cmd.step++;
+                    break;
+                case 1:
+                    cmd.data.cols = parseInt(num);
+                    setPrompt("Specify distance between rows (meters):");
+                    cmd.step++;
+                    break;
+                case 2:
+                    cmd.data.rowSpacing = num;
+                    setPrompt("Specify distance between columns (meters):");
+                    cmd.step++;
+                    break;
+                case 3:
+                    cmd.data.colSpacing = num;
+                    performArray(cmd.data);
+                    completeCommand();
+                    break;
+            }
+        };
+    }
+
+    function performArray(data) {
+        const { rows, cols, rowSpacing, colSpacing } = data;
+        if (rows < 1 || cols < 1) { logToHistory("Rows and columns must be 1 or greater."); return; }
+        const originalEnts = state.selection.map(id => state.ents.find(e => e.id === id)).filter(Boolean);
+
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                if (r === 0 && c === 0) continue;
+
+                originalEnts.forEach(originalEnt => {
+                    const newEnt = JSON.parse(JSON.stringify(originalEnt));
+                    delete newEnt.id;
+
+                    const transformFunc = p => {
+                        let tempPt = getDestinationPoint(p, r * rowSpacing, 0); // North for rows
+                        tempPt = getDestinationPoint(tempPt, c * colSpacing, 90); // East for columns
+                        return tempPt;
+                    };
+
+                    transformPoints(newEnt, transformFunc);
+                    pushEnt(newEnt);
+                });
+            }
+        }
+        snapshot();
+        logToHistory(`Array created (${rows}x${cols}).`);
+    }
+
+  function getPointInput(isSelection=false) { if(state.snapPoint && !isSelection) return state.snapPoint; return {x: state.mouse.worldX, y: state.mouse.worldY }; }
+
+
+  // =======================================================
+  // SECTION: MOUSE AND KEYBOARD INPUT HANDLING
+  // =======================================================
+
+  function bindEvents() {
+    canvas.addEventListener('mousemove', onMouseMove);
+    canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('dblclick', onDblClick);
+    canvas.addEventListener('wheel', onMouseWheel, {passive:false});
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', resize);
+    window.addEventListener('click', () => hideContextMenu()); // Hide context menu on any click
+
+    document.getElementById('gridToggle').onclick = () => toggleState('grid');
+    document.getElementById('orthoToggle').onclick = () => toggleState('ortho');
+    document.getElementById('osnapToggle').onclick = () => toggleState('osnap');
+    document.getElementById('toolbar').addEventListener('click', e => { if(e.target.dataset.command) { runCommand(e.target.dataset.command); } });
+
+    let cmdHistoryIndex = -1;
+    cmdInput.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            const cmdStr = cmdInput.value;
+            cmdInput.value = '';
+            cmdHistoryIndex = -1;
+
+            if (state.activeCommand) {
+                if (typeof state.activeCommand.processInput === 'function') {
+                    state.activeCommand.processInput(cmdStr);
+                    return;
+                }
+                if (typeof state.activeCommand.processSubCommand === 'function') {
+                    state.activeCommand.processSubCommand(cmdStr);
+                    return;
+                }
+            }
+            runCommand(cmdStr);
+        } else if (e.key === 'Escape') {
+            cancelCommand();
+        } else if (e.key === 'ArrowUp') {
+            if(state.commandHistory.length > 0) {
+                cmdHistoryIndex = Math.min(cmdHistoryIndex + 1, state.commandHistory.length - 1);
+                cmdInput.value = state.commandHistory[state.commandHistory.length - 1 - cmdHistoryIndex];
+            }
+        } else if (e.key === 'ArrowDown') {
+            if(cmdHistoryIndex > 0) {
+                cmdHistoryIndex--;
+                cmdInput.value = state.commandHistory[state.commandHistory.length - 1 - cmdHistoryIndex];
+            } else {
+                cmdHistoryIndex = -1; cmdInput.value = '';
+            }
+        }
+    });
+
+    document.getElementById('undoBtn').onclick = undo;
+    document.getElementById('redoBtn').onclick = redo;
+    document.getElementById('addLayerBtn').onclick = addLayer;
+    document.getElementById('toggleMapBtn').onclick = toggleMap;
+
+    document.getElementById('searchCoordsBtn').onclick = searchLocation;
+    document.getElementById('searchCoordsInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            searchLocation();
+        }
+    });
+
+    document.getElementById('exportKmzBtn').onclick = exportToKmz;
+    document.getElementById('exportDxfBtn').onclick = exportToDxf;
+    document.getElementById('saveBtn').onclick = saveDrawing;
+    document.getElementById('openBtn').onclick = () => fileInput.click();
+    fileInput.addEventListener('change', openDrawing);
+    layersDiv.addEventListener('input', onLayerChange);
+
+    layerSelect.oninput = () => updateSelectedEnts('layer', layerSelect.value);
+    colorInput.oninput = () => updateSelectedEnts('color', colorInput.value);
+  }
+
+  async function searchLocation() {
+      const query = document.getElementById('searchCoordsInput').value;
+      if (!query.trim()) {
+          logToHistory("Search query is empty.");
+          return;
+      }
+
+      logToHistory(`Searching for "${query}"...`);
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`;
+
+      try {
+          const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+          if (!response.ok) {
+              throw new Error(`Network response was not ok: ${response.statusText}`);
+          }
+          const data = await response.json();
+
+          if (data && data.length > 0) {
+              const result = data[0];
+              const lat = parseFloat(result.lat);
+              const lon = parseFloat(result.lon);
+
+              logToHistory(`Location found: ${result.display_name}`);
+              leafletMap.setView([lat, lon], 17);
+          } else {
+              logToHistory(`Could not find a location for "${query}".`);
+          }
+      } catch (error) {
+          logToHistory(`Error during search: ${error.message}`);
+          console.error("Geocoding search failed:", error);
+      }
+  }
+
+  function onDblClick(e) {
+    if (state.activeCommand) return; // Don't edit while in a command
+
+    const worldPt = screenToWorld({x: state.mouse.x, y: state.mouse.y});
+    const hit = hitTest(worldPt);
+
+    if (hit && hit.type === 'text') {
+        const newText = prompt("Edit text:", hit.textString);
+        if (newText !== null && newText !== hit.textString) {
+            const entToEdit = state.ents.find(ent => ent.id === hit.id);
+            if (entToEdit) {
+                entToEdit.textString = newText;
+                snapshot();
+                draw();
+                logToHistory("Text edited.");
+            }
+        }
+    }
+  }
+
+  function onMouseDown(e) {
+      state.mouse.isDown = true;
+      state.mouse.lastX = e.clientX;
+      state.mouse.lastY = e.clientY;
+
+      const clickTime = Date.now();
+      const isDoubleClick = (clickTime - state.mouse.lastClickTime) < 300;
+      state.mouse.lastClickTime = clickTime;
+      if (isDoubleClick) return;
+
+      if (e.button === 1) { state.mouse.isPanning = true; leafletMap.dragging.disable(); canvas.style.cursor = 'grabbing'; return; }
+      if (e.button === 0) {
+          if (state.activeGrip) { finalizeGripEdit(); return; }
+
+          if (state.activeCommand) {
+              if (state.activeCommand.name === 'stretch' && state.activeCommand.step === 1) {
+                  state.selectionBox.start = { x: state.mouse.x, y: state.mouse.y };
+              } else {
+                  state.activeCommand.execute();
+              }
+              return;
+          }
+
+          if (state.selection.length > 0) {
+              const gripHit = gripHitTest(getPointInput(true));
+              if (gripHit) {
+                  startGripEdit(gripHit);
+                  return;
+              }
+          }
+
+          const hit = hitTest(getPointInput(true));
+          if (hit) {
+              if (!e.shiftKey) clearSelection();
+              toggleSelect(hit.id, !isSelected(hit.id));
+              draw();
+          } else {
+              if (!e.shiftKey) clearSelection();
+              state.selectionBox = {
+                  start: { x: state.mouse.x, y: state.mouse.y },
+                  end: { x: state.mouse.x, y: state.mouse.y },
+                  type: 'window'
+              };
+          }
+      }
+  }
+
+  function onMouseUp(e) {
+    if (e.button === 2) { // Right-click
+        if(state.activeCommand) {
+            if(state.activeCommand.name === 'polyline' && state.activeCommand.data.points.length > 1) {
+                pushEnt({type:'polyline', pts: state.activeCommand.data.points, closed: false, layer: state.currentLayer, props: curProps()});
+            }
+            completeCommand();
+        } else {
+            const gripHit = gripHitTest(getPointInput(true));
+            if(gripHit) {
+                showContextMenu(e.clientX, e.clientY, gripHit);
+            } else {
+                if (state.lastCommand) runCommand(state.lastCommand.name);
+            }
+        }
+        return;
+    }
+
+    if (state.selectionBox) {
+        if (state.activeCommand && state.activeCommand.name === 'stretch') {
+             finalizeStretchSelection();
+        } else {
+            const dx = Math.abs(state.selectionBox.start.x - state.selectionBox.end.x);
+            const dy = Math.abs(state.selectionBox.start.y - state.selectionBox.end.y);
+            if (dx > 4 || dy > 4) {
+                finalizeSelectionBox();
+            } else {
+                 updatePropertiesPanel();
+            }
+        }
+        state.selectionBox = null;
+        draw();
+    }
+
+    state.mouse.isDown = false;
+    state.mouse.isPanning = false;
+    leafletMap.dragging.enable();
+    canvas.style.cursor = 'default';
+  }
+
+  function onMouseMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    state.mouse.x = e.clientX - rect.left;
+    state.mouse.y = e.clientY - rect.top;
+
+    if (state.mouse.isPanning) {
+        const dx = e.clientX - state.mouse.lastX;
+        const dy = e.clientY - state.mouse.lastY;
+        leafletMap.panBy([ -dx, -dy ], { animate: false });
+        state.mouse.lastX = e.clientX;
+        state.mouse.lastY = e.clientY;
+        draw();
+        return;
+    }
+
+    if (state.mouse.isDown && state.selectionBox) {
+        state.selectionBox.end = { x: state.mouse.x, y: state.mouse.y };
+        if (!state.selectionBox.isForStretch) {
+            state.selectionBox.type = (state.selectionBox.end.x > state.selectionBox.start.x) ? 'window' : 'crossing';
+        }
+        draw();
+        return;
+    }
+
+    const worldPt = screenToWorld(state.mouse);
+    state.mouse.worldX = worldPt.x; state.mouse.worldY = worldPt.y;
+    evaluateSnaps();
+
+    if (state.activeGrip) {
+        const ent = state.ents.find(e => e.id === state.activeGrip.entId);
+        if (!ent) { cancelGripEdit(); return; }
+        let newPt = getPointInput();
+        if (state.ortho) {
+            const originalPt = getGripsForEnt(state.activeGrip.originalEnt)[state.activeGrip.ptIndex];
+            newPt = orthoPoint(originalPt, newPt);
+        }
+        updateEntityWithNewGrip(ent, state.activeGrip.ptIndex, newPt);
+        cursorPosEl.textContent = `${newPt.y.toFixed(5)}, ${newPt.x.toFixed(5)}`;
+        updateTooltipPosition(e);
+        draw();
+        return;
+    }
+
+    if (state.ortho && state.activeCommand && (state.activeCommand.name === 'line' || state.activeCommand.name === 'polyline' || state.activeCommand.name === 'rect') && (state.activeCommand.data.start || state.activeCommand.data.points?.length > 0)) {
+        const lastPt = state.activeCommand.name === 'polyline' ? state.activeCommand.data.points.slice(-1)[0] : state.activeCommand.data.start;
+        if(lastPt) {
+            const orthoPt = orthoPoint(lastPt, getPointInput());
+            state.mouse.worldX = orthoPt.x; state.mouse.worldY = orthoPt.y;
+        }
+    }
+
+    cursorPosEl.textContent = `${state.mouse.worldY.toFixed(5)}, ${state.mouse.worldX.toFixed(5)}`;
+    updateTooltipPosition(e);
+    draw();
+  }
+
+  function onMouseWheel(e) {
+      e.preventDefault();
+      const latlng = leafletMap.containerPointToLatLng([state.mouse.x, state.mouse.y]);
+      const newZoom = leafletMap.getZoom() + (e.deltaY < 0 ? 1 : -1);
+      if (newZoom >= leafletMap.getMinZoom() && newZoom <= leafletMap.getMaxZoom()) {
+          leafletMap.setZoomAround(latlng, newZoom, { animate: false });
+      }
+  }
+
+  function onKeyDown(e) {
+    if (document.activeElement.tagName === 'INPUT' && document.activeElement !== cmdInput) return;
+    if (e.key === 'Escape') {
+      hideContextMenu();
+      if (state.activeGrip) { cancelGripEdit(); }
+      else { cancelCommand(); }
+    }
+    if (e.key === 'F3') { e.preventDefault(); toggleState('osnap'); }
+    if (e.key === 'F7') { e.preventDefault(); toggleState('grid'); }
+    if (e.key === 'F8') { e.preventDefault(); toggleState('ortho'); }
+    if(e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
+    if(e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
+    if(e.ctrlKey && e.key === 'c') { e.preventDefault(); copyToClipboard(); }
+    if(e.ctrlKey && e.key === 'v') { e.preventDefault(); runCommand('paste'); }
+
+    if(document.activeElement !== cmdInput) {
+        if(e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { cmdInput.focus(); cmdInput.value += e.key; e.preventDefault();
+        } else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); runCommand(null); }
+    }
+  }
+
+  // =======================================================
+  // SECTION: DRAWING, SNAPPING & HIT-TESTING
+  // =======================================================
+
+  function draw() {
+    if (!leafletMap) return;
+    const r = canvas.getBoundingClientRect();
+    ctx.clearRect(0,0,r.width,r.height);
+
+    if(state.grid && !isMapVisible) drawGrid();
+    for(const e of state.ents){
+        const L=state.layers.find(l=>l.name===e.layer)||{color:'#e6e9ef', visible:true};
+        if(!L.visible) continue;
+        const color = (e.props && e.props.color) ? e.props.color : L.color;
+        drawEnt(e, { ...e.props, color: color }, isSelected(e.id));
+    }
+
+    drawSelectionGrips();
+    drawTemporaryGeometry();
+    drawSelectionBox();
+    if(state.snapPoint) drawSnapMarker();
+  }
+
+  function drawEnt(e, props, selected) {
+    ctx.lineWidth = selected && !state.activeCommand ? 2 : 1;
+    ctx.strokeStyle = selected && !state.activeCommand ? '#ff8800' : props.color;
+
+    if (e.type === 'line') {
+        ctx.beginPath();
+        const p1 = worldToScreen(e.a); const p2 = worldToScreen(e.b);
+        ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+    } else if (e.type === 'circle') {
+        ctx.beginPath();
+        const segments = 64;
+        for (let i = 0; i <= segments; i++) {
+            const angle = (i / segments) * 360;
+            const ptW = getDestinationPoint(e.c, e.r, angle);
+            const ptS = worldToScreen(ptW);
+            if (i === 0) ctx.moveTo(ptS.x, ptS.y); else ctx.lineTo(ptS.x, ptS.y);
+        }
+        ctx.stroke();
+    } else if (e.type === 'polyline' && e.pts.length > 1) {
+        ctx.beginPath();
+        const p1 = worldToScreen(e.pts[0]); ctx.moveTo(p1.x, p1.y);
+        for(let i=1; i<e.pts.length; i++) { const p2 = worldToScreen(e.pts[i]); ctx.lineTo(p2.x, p2.y); }
+        ctx.stroke();
+    } else if (e.type === 'text') {
+        const p = worldToScreen(e.insertionPoint);
+        const finalColor = selected && !state.activeCommand ? '#ff8800' : props.color;
+        ctx.font = `bold ${e.height || 12}px sans-serif`;
+        ctx.textAlign = e.align || 'left';
+        ctx.textBaseline = e.baseline || 'bottom';
+        const textMetrics = ctx.measureText(e.textString);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+        ctx.fillRect(p.x - 2, p.y - (e.height || 12) - 2, textMetrics.width + 4, (e.height || 12) + 4);
+        ctx.fillStyle = finalColor;
+        ctx.fillText(e.textString, p.x, p.y);
+    }
+  }
+
+  function drawSelectionBox() {
+    if (!state.selectionBox || !state.selectionBox.start || !state.selectionBox.end) return;
+
+    const { start, end, type } = state.selectionBox;
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const w = Math.abs(start.x - end.x);
+    const h = Math.abs(start.y - end.y);
+
+    if (type === 'window') {
+        ctx.fillStyle = 'rgba(0, 128, 255, 0.2)';
+        ctx.strokeStyle = 'rgba(0, 128, 255, 1)';
+        ctx.setLineDash([]);
+    } else {
+        ctx.fillStyle = 'rgba(0, 255, 128, 0.2)';
+        ctx.strokeStyle = 'rgba(0, 255, 128, 1)';
+        ctx.setLineDash([5, 3]);
+    }
+
+    ctx.lineWidth = 1;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+  }
+
+  function drawSelectionGrips() {
+      if (state.selection.length === 0 || state.activeCommand) return;
+      const gripSize = 8;
+
+      for (const id of state.selection) {
+          const ent = state.ents.find(e => e.id === id);
+          if (!ent) continue;
+
+          const grips = getGripsForEnt(ent);
+          for (let i = 0; i < grips.length; i++) {
+              if (ent.type === 'polyline' && ent.closed && i === grips.length - 1) continue;
+
+              const ptS = worldToScreen(grips[i]);
+
+              if (state.activeGrip && state.activeGrip.entId === id && state.activeGrip.ptIndex === i) {
+                  ctx.fillStyle = 'var(--grip-active)';
+              } else {
+                  ctx.fillStyle = 'var(--accent)';
+              }
+              ctx.fillRect(ptS.x - gripSize / 2, ptS.y - gripSize / 2, gripSize, gripSize);
+          }
+      }
+  }
+
+  function drawTemporaryGeometry() {
+      if (!state.activeCommand) return;
+      const { name, data } = state.activeCommand;
+      const currentPt = getPointInput();
+
+      ctx.strokeStyle = '#cccccc';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([]);
+
+      if (name === 'line' && data.start) {
+          const p1 = worldToScreen(data.start); const p2 = worldToScreen(currentPt);
+          ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      } else if (name === 'polyline' && data.points.length > 0) {
+          ctx.beginPath();
+          const startScreenPt = worldToScreen(data.points[0]);
+          ctx.moveTo(startScreenPt.x, startScreenPt.y);
+          for (let i = 1; i < data.points.length; i++) {
+              ctx.lineTo(worldToScreen(data.points[i]).x, worldToScreen(data.points[i]).y);
+          }
+          ctx.lineTo(worldToScreen(currentPt).x, worldToScreen(currentPt).y);
+          ctx.stroke();
+      } else if (name === 'mirror' && data.p1) {
+            const p1 = worldToScreen(data.p1); const p2 = worldToScreen(currentPt);
+            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      }
+
+      ctx.strokeStyle = '#999';
+      ctx.setLineDash([5, 5]);
+
+      if (name === 'rect' && data.start) {
+          const p1 = worldToScreen(data.start); const p2 = worldToScreen(currentPt);
+          ctx.beginPath(); ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y); ctx.stroke();
+      } else if (name === 'circle' && data.center) {
+          const radiusMeters = L.latLng(data.center.y, data.center.x).distanceTo(L.latLng(currentPt.y, currentPt.x));
+          ctx.beginPath();
+          const segments = 64;
+          for (let i = 0; i <= segments; i++) {
+              const ptW = getDestinationPoint(data.center, radiusMeters, (i / segments) * 360);
+              const ptS = worldToScreen(ptW);
+              if (i === 0) ctx.moveTo(ptS.x, ptS.y); else ctx.lineTo(ptS.x, ptS.y);
+          }
+          ctx.stroke();
+      } else if ((name === 'move' || name === 'copy') && data.base) {
+          const dx = currentPt.x - data.base.x; const dy = currentPt.y - data.base.y;
+          const moveFunc = p => ({ x: p.x + dx, y: p.y + dy });
+          for (const id of state.selection) {
+              const ent = state.ents.find(e => e.id === id); if (!ent) continue;
+              const previewEnt = JSON.parse(JSON.stringify(ent));
+              transformPoints(previewEnt, moveFunc);
+              drawEnt(previewEnt, { color: '#999' }, false);
+          }
+      } else if (name === 'paste' && state.clipboard.basePoint) {
+           const { data: clipboardEnts, basePoint } = state.clipboard;
+           const dx = currentPt.x - basePoint.x;
+           const dy = currentPt.y - basePoint.y;
+           const moveFunc = p => ({ x: p.x + dx, y: p.y + dy });
+           for (const ent of clipboardEnts) {
+               const previewEnt = JSON.parse(JSON.stringify(ent));
+               transformPoints(previewEnt, moveFunc);
+               drawEnt(previewEnt, { color: '#999' }, false);
+           }
+      } else if ((name === 'rotate' || name === 'scale') && data.base && data.ref) {
+          const base_s = worldToScreen(data.base); const ref_s = worldToScreen(data.ref); const current_s = worldToScreen(currentPt);
+          const v_ref = { x: ref_s.x - base_s.x, y: ref_s.y - base_s.y };
+          const v_dest = { x: current_s.x - base_s.x, y: current_s.y - base_s.y };
+          const len_ref = Math.hypot(v_ref.x, v_ref.y); if (len_ref < 1) return;
+          const len_dest = Math.hypot(v_dest.x, v_dest.y);
+          const scaleFactor = (name === 'scale') ? (len_dest / len_ref) : 1.0;
+          const angleRad = (name === 'rotate') ? (Math.atan2(v_dest.y, v_dest.x) - Math.atan2(v_ref.y, v_ref.x)) : 0.0;
+          const cosA = Math.cos(angleRad); const sinA = Math.sin(angleRad);
+          const transformFunc = (p_world) => {
+              const p_s = worldToScreen(p_world);
+              const dx = p_s.x - base_s.x; const dy = p_s.y - base_s.y;
+              const scaled_dx = dx * scaleFactor; const scaled_dy = dy * scaleFactor;
+              const new_dx = scaled_dx * cosA - scaled_dy * sinA;
+              const new_dy = scaled_dx * sinA + scaled_dy * cosA;
+              return screenToWorld({ x: base_s.x + new_dx, y: base_s.y + new_dy });
+          };
+          for (const id of state.selection) {
+              const ent = state.ents.find(e => e.id === id); if (!ent) continue;
+              const previewEnt = JSON.parse(JSON.stringify(ent));
+              transformPoints(previewEnt, transformFunc);
+              if (previewEnt.type === 'circle' && name === 'scale') { previewEnt.r *= scaleFactor; }
+              drawEnt(previewEnt, { color: '#999' }, false);
+          }
+      }
+
+      ctx.setLineDash([]);
+  }
+
+
+  function drawGrid() { /* Grid is disabled in map mode for simplicity */ }
+
+  function drawSnapMarker() {
+      if(!state.snapPoint) return;
+      const markerSize = 8;
+      const ptS = worldToScreen(state.snapPoint);
+      ctx.strokeStyle = 'var(--osnap-marker)'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      const {x, y, type} = {...ptS, type: state.snapPoint.type};
+      if (type === 'endpoint') ctx.rect(x - markerSize/2, y - markerSize/2, markerSize, markerSize);
+      else if (type === 'midpoint') { ctx.moveTo(x, y - markerSize/2); ctx.lineTo(x + markerSize/2, y + markerSize/2); ctx.lineTo(x - markerSize/2, y + markerSize/2); ctx.closePath(); }
+      else if (type === 'center') ctx.arc(x, y, markerSize/2, 0, Math.PI*2);
+      ctx.stroke();
+  }
+
+  function evaluateSnaps() {
+      state.snapPoint = null;
+      if(!state.osnap) return;
+      const snapDist = 10; // pixels
+      let bestDist = snapDist;
+      const mouseS = {x:state.mouse.x, y:state.mouse.y};
+      let bestSnapW = null;
+
+      for(const ent of state.ents) {
+          if (ent.type === 'line') {
+              checkSnap(ent.a, 'endpoint'); checkSnap(ent.b, 'endpoint');
+              const mid = {x: (ent.a.x+ent.b.x)/2, y: (ent.a.y+ent.b.y)/2}; checkSnap(mid, 'midpoint');
+          } else if (ent.type === 'circle') { checkSnap(ent.c, 'center');
+          } else if (ent.type === 'polyline') {
+              for (let i = 0; i < ent.pts.length; i++) {
+                  checkSnap(ent.pts[i], 'endpoint');
+                  if (i > 0) { const mid = {x: (ent.pts[i-1].x + ent.pts[i].x)/2, y: (ent.pts[i-1].y + ent.pts[i].y)/2}; checkSnap(mid, 'midpoint'); }
+              }
+          }
+      }
+      function checkSnap(ptW, type) {
+        const ptS = worldToScreen(ptW); const d = distScreen(ptS, mouseS);
+        if (d < bestDist) { bestDist = d; bestSnapW = {...ptW, type}; }
+      }
+      state.snapPoint = bestSnapW;
+  }
+
+  const pushEnt = (ent) => { if(!ent.id) ent.id=nextId++; state.ents.push(ent); snapshot(); return ent; };
+  const hitTest = (p) => {
+    let best=null, bd = 8;
+    const pS = worldToScreen(p);
+    for(const e of [...state.ents].reverse()){ // Reverse to pick top-most entities first
+      let d = Infinity;
+      if(e.type==='line') { const aS=worldToScreen(e.a), bS=worldToScreen(e.b); const l2=(bS.x-aS.x)**2+(bS.y-aS.y)**2; if (l2===0){ d=distScreen(pS, aS);} else {let t=((pS.x-aS.x)*(bS.x-aS.x)+(pS.y-aS.y)*(bS.y-aS.y))/l2; t=clamp(t,0,1); d = distScreen(pS, {x:aS.x+t*(bS.x-aS.x), y:aS.y+t*(bS.y-aS.y)});}}
+      else if(e.type==='circle') { const cS=worldToScreen(e.c); const ptOnCircW = getDestinationPoint(e.c, e.r, 0); const ptOnCircS = worldToScreen(ptOnCircW); const rS = distScreen(cS, ptOnCircS); d = Math.abs(distScreen(pS, cS) - rS); }
+      else if(e.type==='polyline' && e.pts.length > 1) {
+          for (let i = 0; i < e.pts.length - 1; i++) {
+              const aS=worldToScreen(e.pts[i]), bS=worldToScreen(e.pts[i+1]); const l2=(bS.x-aS.x)**2+(bS.y-aS.y)**2; if(l2===0) continue; let t=((pS.x-aS.x)*(bS.x-aS.x)+(pS.y-aS.y)*(bS.y-aS.y))/l2; t=clamp(t,0,1); const current_d = distScreen(pS, {x:aS.x+t*(bS.x-aS.x), y:aS.y+t*(bS.y-aS.y)}); d = Math.min(d, current_d);
+          }
+      } else if (e.type === 'text') {
+          const ptS = worldToScreen(e.insertionPoint);
+          ctx.font = `bold ${e.height || 12}px sans-serif`;
+          const textMetrics = ctx.measureText(e.textString);
+          const textRect = { x: ptS.x, y: ptS.y - (e.height || 12), width: textMetrics.width, height: (e.height || 12) };
+          if(pS.x >= textRect.x && pS.x <= textRect.x + textRect.width && pS.y >= textRect.y && pS.y <= textRect.y + textRect.height) {
+              d = 0; // Direct hit
+          }
+      }
+      if(d<bd){ bd=d; best=e; }
+    }
+    return best;
+  }
+  const isSelected = (id) => state.selection.includes(id);
+  const toggleSelect = (id, on) => {
+      if(on){ if(!isSelected(id)) state.selection.push(id); }
+      else{ state.selection = state.selection.filter(i=>i!==id); }
+      updatePropertiesPanel();
+  };
+  const clearSelection = () => {
+      if(state.selection.length > 0) {
+          state.selection.length = 0;
+          updatePropertiesPanel();
+          draw();
+      }
+  }
+  const deleteSelection = () => { if (state.selection.length === 0) return; const count = state.selection.length; state.ents = state.ents.filter(e => !isSelected(e.id)); clearSelection(); snapshot(); logToHistory(`${count} object(s) erased.`); draw(); }
+
+  function isPointInRect(p, r) {
+      return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  }
+  function lineIntersectsLine(p1, p2, p3, p4) {
+      const d = (p4.y - p3.y) * (p2.x - p1.x) - (p4.x - p3.x) * (p2.y - p1.y);
+      if (d === 0) return false;
+      const t = ((p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x)) / d;
+      const u = ((p2.x - p1.x) * (p1.y - p3.y) - (p2.y - p1.y) * (p1.x - p3.x)) / d;
+      return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  }
+  function isEntInSelectionBox(ent, r, isCrossing) {
+      if (ent.type === 'line') {
+          const aS = worldToScreen(ent.a); const bS = worldToScreen(ent.b);
+          if (isCrossing) {
+              if (isPointInRect(aS, r) || isPointInRect(bS, r)) return true;
+              const r_tl = { x: r.x, y: r.y }, r_tr = { x: r.x + r.w, y: r.y };
+              const r_bl = { x: r.x, y: r.y + r.h }, r_br = { x: r.x + r.w, y: r.y + r.h };
+              if (lineIntersectsLine(aS, bS, r_tl, r_tr) || lineIntersectsLine(aS, bS, r_tr, r_br) || lineIntersectsLine(aS, bS, r_br, r_bl) || lineIntersectsLine(aS, bS, r_bl, r_tl)) return true;
+              return false;
+          } else { return isPointInRect(aS, r) && isPointInRect(bS, r); }
+      } else if (ent.type === 'polyline') {
+          const ptsS = ent.pts.map(p => worldToScreen(p));
+          if (isCrossing) {
+              for (let i = 0; i < ptsS.length - 1; i++) { if (isEntInSelectionBox({ type: 'line', a: ent.pts[i], b: ent.pts[i + 1] }, r, true)) return true; }
+              return false;
+          } else { return ptsS.every(p => isPointInRect(p, r)); }
+      } else if (ent.type === 'circle') {
+          const cS = worldToScreen(ent.c);
+          const edgeW = getDestinationPoint(ent.c, ent.r, 0); const edgeS = worldToScreen(edgeW);
+          const rS = distScreen(cS, edgeS);
+          const ent_r = { x: cS.x - rS, y: cS.y - rS, w: 2 * rS, h: 2 * rS };
+          if (isCrossing) { return !(r.x > ent_r.x + ent_r.w || r.x + r.w < ent_r.x || r.y > ent_r.y + ent_r.h || r.y + r.h < ent_r.y); }
+          else { return ent_r.x >= r.x && ent_r.x + ent_r.w <= r.x + r.w && ent_r.y >= r.y && ent_r.y + ent_r.h <= r.y + r.h; }
+      } else if (ent.type === 'text') {
+          const pS = worldToScreen(ent.insertionPoint);
+          if (isCrossing) { return isPointInRect(pS, r); }
+          else { return isPointInRect(pS, r); }
+      }
+      return false;
+  }
+  function finalizeSelectionBox() {
+      const { start, end, type } = state.selectionBox;
+      const rect = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), w: Math.abs(start.x - end.x), h: Math.abs(start.y - end.y) };
+      const isCrossing = type === 'crossing';
+      for (const ent of state.ents) {
+          if (isEntInSelectionBox(ent, rect, isCrossing)) { toggleSelect(ent.id, true); }
+      }
+  }
+
+    function finalizeStretchSelection() {
+        const { start, end } = state.selectionBox;
+        if (end.x > start.x) {
+            logToHistory("Stretch requires a crossing window (right to left).");
+            cancelCommand();
+            return;
+        }
+
+        const rect = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), w: Math.abs(start.x - end.x), h: Math.abs(start.y - end.y) };
+        const cmd = state.activeCommand;
+        cmd.data.vertsToStretch = [];
+
+        for (const ent of state.ents) {
+            if(ent.type !== 'line' && ent.type !== 'polyline') continue;
+            const grips = getGripsForEnt(ent);
+            const verticesInWindow = [];
+            grips.forEach((grip, index) => {
+                const grip_s = worldToScreen(grip);
+                if (isPointInRect(grip_s, rect)) {
+                    verticesInWindow.push(index);
+                }
+            });
+
+            if (verticesInWindow.length > 0) {
+                 if (ent.type === 'polyline' && verticesInWindow.length === grips.length) continue;
+                 cmd.data.vertsToStretch.push({ ent, vertices: verticesInWindow });
+            }
+        }
+        if (cmd.data.vertsToStretch.length > 0) {
+            logToHistory(`${cmd.data.vertsToStretch.length} object(s) selected for stretch.`);
+            setPrompt("Specify base point:");
+            cmd.step = 2;
+        } else {
+            logToHistory("No vertices selected to stretch.");
+            cancelCommand();
+        }
+    }
+
+  // =======================================================
+  // SECTION: GRIP EDITING LOGIC
+  // =======================================================
+
+  function getGripsForEnt(ent) {
+      if (ent.type === 'line') return [ent.a, ent.b];
+      if (ent.type === 'polyline') return ent.pts;
+      if (ent.type === 'text') return [ent.insertionPoint];
+      if (ent.type === 'circle') {
+          const quads = [
+              getDestinationPoint(ent.c, ent.r, 0),
+              getDestinationPoint(ent.c, ent.r, 90),
+              getDestinationPoint(ent.c, ent.r, 180),
+              getDestinationPoint(ent.c, ent.r, 270),
+          ];
+          return [ent.c, ...quads];
+      }
+      return [];
+  }
+
+  function gripHitTest(worldPt) {
+      const gripScreenRadius = 8;
+      const ptS = worldToScreen(worldPt);
+      for (const id of state.selection) {
+          const ent = state.ents.find(e => e.id === id);
+          if (!ent) continue;
+
+          const grips = getGripsForEnt(ent);
+          for (let i = 0; i < grips.length; i++) {
+              const gripS = worldToScreen(grips[i]);
+              if (distScreen(ptS, gripS) < gripScreenRadius) {
+                  return { entId: id, ptIndex: i };
+              }
+          }
+      }
+      return null;
+  }
+
+  function startGripEdit(gripHit) {
+      const ent = state.ents.find(e => e.id === gripHit.entId);
+      if (!ent) return;
+      state.activeGrip = {
+          entId: gripHit.entId,
+          ptIndex: gripHit.ptIndex,
+          originalEnt: JSON.parse(JSON.stringify(ent))
+      };
+      logToHistory("Grip edit started (STRETCH).");
+      setPrompt("Specify new point location...");
+      draw();
+  }
+
+  function finalizeGripEdit() {
+      if (!state.activeGrip) return;
+      logToHistory("Grip edit finalized.");
+      state.activeGrip = null;
+      snapshot();
+      setPrompt("Command: ");
+      draw();
+  }
+
+  function cancelGripEdit() {
+      if (!state.activeGrip) return;
+      const index = state.ents.findIndex(e => e.id === state.activeGrip.entId);
+      if (index !== -1) {
+          state.ents[index] = state.activeGrip.originalEnt;
+      }
+      logToHistory("*Cancel* Grip edit canceled.");
+      state.activeGrip = null;
+      setPrompt("Command: ");
+      draw();
+  }
+
+  function updateEntityWithNewGrip(ent, ptIndex, newPt) {
+      if (ent.type === 'line') {
+          if (ptIndex === 0) ent.a = newPt;
+          else ent.b = newPt;
+      } else if (ent.type === 'polyline') {
+          ent.pts[ptIndex] = newPt;
+          if (ent.closed && (ptIndex === 0 || ptIndex === ent.pts.length - 1)) {
+              ent.pts[0] = newPt;
+              ent.pts[ent.pts.length - 1] = newPt;
+          }
+      } else if (ent.type === 'text') {
+          if (ptIndex === 0) ent.insertionPoint = newPt;
+      } else if (ent.type === 'circle') {
+          if (ptIndex === 0) {
+              ent.c = newPt;
+          } else {
+              const centerLatLng = L.latLng(ent.c.y, ent.c.x);
+              const newPtLatLng = L.latLng(newPt.y, newPt.x);
+              ent.r = centerLatLng.distanceTo(newPtLatLng);
+          }
+      }
+  }
+
+
+    // =======================================================
+    // SECTION: CONTEXT MENU
+    // =======================================================
+
+    function showContextMenu(x, y, gripHit) {
+        contextMenu.innerHTML = ''; // Clear previous items
+        const ent = state.ents.find(e => e.id === gripHit.entId);
+        if (!ent) return;
+
+        if (ent.type === 'polyline' && ent.pts.length > 1) {
+            const button = document.createElement('button');
+            button.textContent = 'Add Vertex';
+            button.onclick = () => {
+                addVertex(gripHit.entId, gripHit.ptIndex);
+                hideContextMenu();
+            };
+            contextMenu.appendChild(button);
+        }
+
+        if (contextMenu.children.length > 0) {
+            contextMenu.style.left = `${x}px`;
+            contextMenu.style.top = `${y}px`;
+            contextMenu.style.display = 'block';
+        }
+    }
+
+    function hideContextMenu() {
+        contextMenu.style.display = 'none';
+    }
+
+    function addVertex(entId, ptIndex) {
+        const ent = state.ents.find(e => e.id === entId);
+        if (!ent || ent.type !== 'polyline') return;
+
+        let p1_idx, p2_idx;
+        if (ptIndex === 0) {
+            if (ent.closed) {
+                p1_idx = ent.pts.length - 2; // Second to last point
+                p2_idx = 0;
+            } else {
+                return; // Can't add before the start of an open polyline
+            }
+        } else {
+            p1_idx = ptIndex - 1;
+            p2_idx = ptIndex;
+        }
+
+        const p1 = ent.pts[p1_idx];
+        const p2 = ent.pts[p2_idx];
+        const newVertex = {
+            x: (p1.x + p2.x) / 2,
+            y: (p1.y + p2.y) / 2
+        };
+
+        ent.pts.splice(p2_idx, 0, newVertex);
+
+        logToHistory("Vertex added to polyline.");
+        snapshot();
+        draw();
+    }
+
+
+  // =======================================================
+  // SECTION: UI & STATE HELPERS
+  // =======================================================
+  function copyToClipboard() {
+      if (state.selection.length === 0) {
+          logToHistory("Nothing selected to copy to clipboard.");
+          return;
+      }
+      state.clipboard.data = state.selection.map(id => {
+          const ent = state.ents.find(e => e.id === id);
+          return JSON.parse(JSON.stringify(ent));
+      });
+
+      // Calculate a base point from the selection's bounding box center
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for(const id of state.selection) {
+          const ent = state.ents.find(e => e.id === id);
+          if(!ent) continue;
+          const grips = getGripsForEnt(ent);
+          for(const pt of grips) {
+              minX = Math.min(minX, pt.x);
+              minY = Math.min(minY, pt.y);
+              maxX = Math.max(maxX, pt.x);
+              maxY = Math.max(maxY, pt.y);
+          }
+      }
+      state.clipboard.basePoint = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+
+      logToHistory(`${state.selection.length} object(s) copied to clipboard.`);
+  }
+
+  function toggleState(mode) { state[mode] = !state[mode]; logToHistory(`${mode.toUpperCase()} <${state[mode] ? 'ON' : 'OFF'}>`); updateStatusBar(); draw(); }
+  function toggleMap() { isMapVisible = !isMapVisible; if(isMapVisible) { mapTileLayer.addTo(leafletMap); } else { leafletMap.removeLayer(mapTileLayer); } canvas.style.backgroundColor = isMapVisible ? 'transparent' : '#212830'; draw(); }
+  function updateStatusBar() { const t = (id, a) => document.getElementById(id).classList.toggle('active',a); t('gridToggle', state.grid); t('orthoToggle', state.ortho); t('osnapToggle', state.osnap); }
+  function resize() { const r=canvas.parentElement.getBoundingClientRect(); canvas.width=r.width; canvas.height=r.height; if(leafletMap) leafletMap.invalidateSize(); draw(); }
+  function updateTooltipPosition(e) { tooltip.style.left = `${e.clientX + 20}px`; tooltip.style.top = `${e.clientY + 20}px`; }
+  function showTooltip(text) { if(state.activeCommand || state.activeGrip) { tooltip.textContent = text; tooltip.style.display = 'block'; } }
+  function hideTooltip() { tooltip.style.display = 'none'; }
+
+  function updatePropertiesPanel() {
+      layerSelect.innerHTML = '';
+      state.layers.forEach(l => {
+          const opt = document.createElement('option');
+          opt.value = l.name;
+          opt.textContent = l.name;
+          layerSelect.appendChild(opt);
+      });
+
+      if (state.selection.length === 0) {
+          typeInput.value = 'No selection';
+          layerSelect.value = state.currentLayer;
+          const currentLayerObj = state.layers.find(l => l.name === state.currentLayer);
+          colorInput.value = currentLayerObj ? currentLayerObj.color : '#e6e9ef';
+          layerSelect.disabled = true;
+          colorInput.disabled = true;
+      } else {
+          const selectedEnts = state.selection.map(id => state.ents.find(e => e.id === id)).filter(Boolean);
+          const firstEnt = selectedEnts[0];
+
+          typeInput.value = state.selection.length > 1 ? `Multiple (${state.selection.length})` : firstEnt.type;
+
+          const allSameLayer = selectedEnts.every(e => e.layer === firstEnt.layer);
+          layerSelect.value = allSameLayer ? firstEnt.layer : '';
+
+          const firstColor = (firstEnt.props && firstEnt.props.color) || 'ByLayer';
+          const allSameColor = selectedEnts.every(e => ((e.props && e.props.color) || 'ByLayer') === firstColor);
+          if(allSameColor && firstColor !== 'ByLayer') {
+              colorInput.value = firstColor;
+          } else {
+             const layerObj = state.layers.find(l => l.name === layerSelect.value);
+             colorInput.value = layerObj ? layerObj.color : '#ffffff';
+          }
+
+          layerSelect.disabled = false;
+          colorInput.disabled = false;
+      }
+  }
+
+  function updateSelectedEnts(prop, value) {
+      if (state.selection.length === 0) return;
+      state.selection.forEach(id => {
+          const ent = state.ents.find(e => e.id === id);
+          if (!ent) return;
+          if (prop === 'layer') {
+              ent.layer = value;
+          } else if (prop === 'color') {
+              if (!ent.props) ent.props = {};
+              ent.props.color = value;
+          }
+      });
+      snapshot();
+      draw();
+  }
+
+  function refreshLayersUI(){
+      layersDiv.innerHTML = '';
+      const propLayerSelect = document.getElementById('propLayer');
+      propLayerSelect.innerHTML = '';
+
+      state.layers.forEach(l => {
+          const row = document.createElement('div'); row.className = 'layer-row';
+          row.innerHTML = `<input type="checkbox" data-name="${l.name}" data-prop="visible" ${l.visible ? 'checked' : ''}><input type="color" data-name="${l.name}" data-prop="color" value="${l.color}"><span>${l.name}</span>`;
+          layersDiv.appendChild(row);
+          const opt = document.createElement('option'); opt.value = l.name; opt.textContent = l.name; propLayerSelect.appendChild(opt);
+      });
+      updatePropertiesPanel();
+  }
+
+  function addLayer(){
+      const nameInput = document.getElementById('newLayerName'); const name = nameInput.value.trim();
+      if (!name) { alert("Layer name cannot be empty."); return; }
+      if (state.layers.some(l => l.name.toLowerCase() === name.toLowerCase())) { alert("Layer name already exists."); return; }
+      state.layers.push({ name, color: '#ffffff', visible: true, locked: false }); state.currentLayer = name;
+      nameInput.value = ''; snapshot(); refreshLayersUI();
+  }
+  function onLayerChange(e) {
+      const t = e.target; const n=t.dataset.name, p=t.dataset.prop; const l=state.layers.find(l=>l.name===n); if(!l)return;
+      if(p==='visible') l.visible=t.checked; else if (p==='color') l.color=t.value;
+      snapshot(); draw();
+  }
+  function curProps() { const l=state.layers.find(l=>l.name===state.currentLayer); return { color: l ? l.color : '#e6e9ef' }; }
+  function snapshot(){ const s=JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer}); if (state.history[state.history.length-1] !== s) { state.history.push(s); if(state.history.length>50)state.history.shift(); state.future=[]; } }
+  function loadState(s) {
+      try {
+        const r = JSON.parse(s);
+        state.ents=r.ents||[];
+        state.layers=r.layers||[{name:'0',color:'#e6e9ef',visible:true,locked:false}];
+        state.currentLayer=r.currentLayer||'0';
+        nextId=(state.ents.reduce((m,e)=>Math.max(m,e.id),0)||0)+1;
+        refreshLayersUI();
+        updateStatusBar();
+        draw();
+        logToHistory("Drawing loaded successfully.");
+      } catch (e) {
+        logToHistory("Error: Could not load the file. It might be corrupted or not a valid drawing file.");
+        console.error("File loading error:", e);
+      }
+  }
+  function undo() { if(state.history.length<=1)return; state.future.push(state.history.pop()); loadState(state.history[state.history.length-1]); }
+  function redo() { if(state.future.length===0)return; const s=state.future.pop(); state.history.push(s); loadState(s); }
+
+  function saveAs(blob, filename) {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  }
+
+  function saveDrawing() {
+      const data = {
+          ents: state.ents,
+          layers: state.layers,
+          currentLayer: state.currentLayer,
+      };
+      const jsonString = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonString], {type: 'application/json'});
+      saveAs(blob, 'drawing.json');
+      logToHistory("Drawing saved.");
+  }
+
+  function openDrawing(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+          const content = e.target.result;
+          loadState(content);
+          snapshot();
+      };
+      reader.readAsText(file);
+      fileInput.value = '';
+  }
+
+  function escapeXml(unsafe) {
+    return unsafe.replace(/[<>&'"]/g, function (c) {
+        switch (c) {
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '&': return '&amp;';
+            case '\'': return '&apos;';
+            case '"': return '&quot;';
+        }
+    });
+  }
+
+  function exportToKmz() {
+      if(!window.JSZip){alert("JSZip library not found."); return;}
+      const zip = new JSZip();
+      let kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>`;
+      state.layers.forEach(layer => { const kmlColor = "ff" + layer.color.substring(5, 7) + layer.color.substring(3, 5) + layer.color.substring(1, 3); kml += `<Style id="layer-${layer.name.replace(/\s/g, '_')}"><LineStyle><color>${kmlColor}</color><width>2</width></LineStyle><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-blank.png</href></Icon><hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/></IconStyle></Style>`; });
+
+      state.ents.forEach(ent => {
+          const layer = state.layers.find(l => l.name === ent.layer) || state.layers[0]; if (!layer.visible) return;
+          const styleUrl = `#layer-${layer.name.replace(/\s/g, '_')}`;
+
+          if (ent.type === 'line' || ent.type === 'polyline' || ent.type === 'circle') {
+            kml += `<Placemark><styleUrl>${styleUrl}</styleUrl><LineString><coordinates>`;
+            if (ent.type === 'line') { kml += `${ent.a.x},${ent.a.y},0 ${ent.b.x},${ent.b.y},0`; }
+            else if (ent.type === 'polyline') { kml += ent.pts.map(p => `${p.x},${p.y},0`).join(' '); }
+            else if (ent.type === 'circle') {
+                const segments = 64; let coords = '';
+                for (let i = 0; i <= segments; i++) { const angle = (i/segments)*360; const pt = getDestinationPoint(ent.c, ent.r, angle); coords += `${pt.x},${pt.y},0 `; }
+                kml += coords.trim();
+            }
+            kml += `</coordinates></LineString></Placemark>`;
+          } else if (ent.type === 'text') {
+            kml += `<Placemark><name>${escapeXml(ent.textString)}</name><styleUrl>${styleUrl}</styleUrl><Point><coordinates>${ent.insertionPoint.x},${ent.insertionPoint.y},0</coordinates></Point></Placemark>`;
+          }
+      });
+      kml += `</Document></kml>`;
+      zip.file("doc.kml", kml);
+      zip.generateAsync({type:"blob"}).then(function(content) {
+          saveAs(content, "export.kmz");
+      });
+      logToHistory("Exporting to KMZ...");
+  }
+
+  function exportToDxf() {
+    logToHistory("Exporting to DXF...");
+    const dxf = [];
+    const p = (code, value) => dxf.push(code, value);
+
+    const hexToAci = (hex) => {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        if (r > 200 && g > 200 && b > 200) return 7; // White
+        if (r > 200 && g < 100 && b < 100) return 1; // Red
+        if (g > 200 && r < 100 && b < 100) return 3; // Green
+        if (b > 200 && r < 100 && g < 100) return 5; // Blue
+        if (r > 200 && g > 200 && b < 100) return 2; // Yellow
+        return 7;
+    };
+
+    p(0, 'SECTION'); p(2, 'HEADER');
+    p(9, '$ACADVER'); p(1, 'AC1009');
+    p(0, 'ENDSEC');
+
+    p(0, 'SECTION'); p(2, 'TABLES');
+    p(0, 'TABLE'); p(2, 'LAYER');
+    state.layers.forEach(layer => {
+        p(0, 'LAYER');
+        p(2, layer.name);
+        p(70, 0);
+        p(62, hexToAci(layer.color));
+        p(6, 'Continuous');
+    });
+    p(0, 'ENDTAB');
+    p(0, 'ENDSEC');
+
+    p(0, 'SECTION'); p(2, 'ENTITIES');
+    state.ents.forEach(ent => {
+        const layer = state.layers.find(l => l.name === ent.layer);
+        if (!layer || !layer.visible) return;
+
+        if (ent.type === 'line') {
+            p(0, 'LINE');
+            p(8, ent.layer);
+            p(10, ent.a.x); p(20, ent.a.y); p(30, 0);
+            p(11, ent.b.x); p(21, ent.b.y); p(31, 0);
+        } else if (ent.type === 'polyline' && ent.pts.length > 1) {
+            p(0, 'LWPOLYLINE');
+            p(8, ent.layer);
+            p(90, ent.pts.length);
+            p(70, ent.closed ? 1 : 0);
+            ent.pts.forEach(pt => {
+                p(10, pt.x); p(20, pt.y);
+            });
+        } else if (ent.type === 'circle') {
+            const latRad = ent.c.y * Math.PI / 180;
+            const radiusInDegrees = ent.r / (111320 * Math.cos(latRad));
+            p(0, 'CIRCLE');
+            p(8, ent.layer);
+            p(10, ent.c.x); p(20, ent.c.y); p(30, 0);
+            p(40, radiusInDegrees);
+        } else if (ent.type === 'text') {
+            p(0, 'TEXT');
+            p(8, ent.layer);
+            p(10, ent.insertionPoint.x); p(20, ent.insertionPoint.y); p(30, 0);
+            const heightInDegrees = (ent.height || 14) / (leafletMap.getZoomScale(21) * 256);
+            p(40, heightInDegrees);
+            p(1, ent.textString);
+        }
+    });
+    p(0, 'ENDSEC');
+    p(0, 'EOF');
+
+    const dxfString = dxf.join('\n');
+    const blob = new Blob([dxfString], { type: 'application/dxf' });
+    saveAs(blob, 'export.dxf');
+  }
+
+  // Run the application
+  init();
+})();
+</script>
+</body>
+</html>
