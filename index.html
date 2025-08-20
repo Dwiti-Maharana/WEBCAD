@@ -43,7 +43,7 @@
   #layers .layer-row input[type=checkbox] { width: 16px; height: 16px; }
 
   /* Modelspace Area */
-  .canvas-wrap{grid-area:canvas;position:relative;background:var(--bg);overflow:hidden; cursor: default;}
+  .canvas-wrap{grid-area:canvas;position:relative;background:var(--bg);overflow:hidden; cursor: none;}
   #map{position:absolute;inset:0;z-index:0;background:#1b1f26;}
   canvas#cad{position:absolute;inset:0;z-index:1;display:block; background-color: transparent; pointer-events: auto;}
 
@@ -2052,6 +2052,9 @@
     drawTemporaryGeometry();
     drawSelectionBox();
     if(state.snapPoint) drawSnapMarker();
+    
+    drawCrosshairCursor();
+
     ctx.setLineDash([]);
     ctx.globalAlpha = 1.0;
   }
@@ -2280,6 +2283,35 @@
       else if (type === 'midpoint') { ctx.moveTo(x, y - markerSize/2); ctx.lineTo(x + markerSize/2, y + markerSize/2); ctx.lineTo(x - markerSize/2, y + markerSize/2); ctx.closePath(); }
       else if (type === 'center') ctx.arc(x, y, markerSize/2, 0, Math.PI*2);
       ctx.stroke();
+  }
+
+  function drawCrosshairCursor() {
+    if (state.mouse.isPanning) return;
+
+    const { x, y } = state.mouse;
+    const { width, height } = canvas;
+
+    // CHANGE THIS LINE FOR CURSOR COLOR
+    ctx.strokeStyle = '#0000FF'; // Changed from white to blue
+
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+
+    // Horizontal line
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(width, y + 0.5);
+    ctx.stroke();
+
+    // Vertical line
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, 0);
+    ctx.lineTo(x + 0.5, height);
+    ctx.stroke();
+
+    // Pickbox
+    const pickboxSize = 15;
+    ctx.strokeRect(x - pickboxSize / 2 + 0.5, y - pickboxSize / 2 + 0.5, pickboxSize, pickboxSize);
   }
 
   function evaluateSnaps() {
