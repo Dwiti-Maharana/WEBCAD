@@ -10,6 +10,12 @@
 <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
 <!-- JSZip for KMZ export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- OCR and Screenshot Libraries -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+<!-- OpenCV.js for Image to CAD -->
+<script async src="https://docs.opencv.org/4.5.2/opencv.js" id="opencv-script"></script>
+
 
 <style>
   :root{
@@ -27,17 +33,17 @@
   .card{background:var(--panel2);border:1px solid #4a5766;border-radius:14px;padding:10px}
   .card h3{margin:0 0 8px;font-size:14px;color:#c0d2ff}
   .row{display:flex;align-items:center;justify-content:space-between;margin:6px 0; gap: 8px;}
-  .row input[type="color"], .row input[type="number"], .row select, .row input[type="text"] {background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px; flex: 1;}
+  .row input[type="color"], .row input[type="number"], .row select, .row input[type="text"] {background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px; flex: 1; min-width: 0;}
   .row input[readonly] { background: #1a1f26; color: var(--muted); }
   .row select:disabled, .row input:disabled { background: #1a1f26; color: var(--muted); cursor: not-allowed; }
-  .row label { flex-shrink: 0; width: 70px; }
+  .row label { flex-shrink: 0; width: 85px; font-size: 13px; }
   #newLayerName { flex: 1; min-width: 0; background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px; }
   #layers .layer-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
   #layers .layer-row span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
   #layers .layer-row input[type=checkbox] { width: 16px; height: 16px; }
 
   /* Modelspace Area */
-  .canvas-wrap{grid-area:canvas;position:relative;background:#0b0e14;overflow:hidden; cursor: default;}
+  .canvas-wrap{grid-area:canvas;position:relative;background:var(--bg);overflow:hidden; cursor: default;}
   #map{position:absolute;inset:0;z-index:0;background:#1b1f26;}
   canvas#cad{position:absolute;inset:0;z-index:1;display:block; background-color: transparent; pointer-events: auto;}
 
@@ -82,6 +88,24 @@
       background-color: var(--accent);
       color: #fff;
   }
+    
+  /* Modal Styles */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 100; display: flex; align-items: center; justify-content: center;
+  }
+  .modal-content {
+    background: var(--panel); border: 1px solid #4a5766; border-radius: 14px;
+    padding: 20px; width: 400px; box-shadow: 0 5px 20px rgba(0,0,0,0.4);
+  }
+  .modal-content h3 { margin-top: 0; color:#c0d2ff }
+  .modal-content button {
+    border:1px solid #4a5766;background:var(--panel2);color:var(--text);
+    padding:6px 12px;border-radius:10px;cursor:pointer
+  }
+  .modal-content button:hover { background: #4e5a6e; }
+  .modal-content input[type="range"] { flex: 1; }
+  .modal-content .row label { width: 120px; }
 </style>
 </head>
 <body>
@@ -116,9 +140,11 @@
       <button data-command="explode" title="Explode (X)">Explode</button>
       <button data-command="matchprop" title="Match Properties (MA)">Matchprop</button>
       <div class="sep"></div>
+      <button data-command="imagetext" title="Image Text (IT)">Image Text</button>
+      <button data-command="maptocad" title="Map to CAD (MTC)">Map to CAD</button>
       <button data-command="getaddress" title="Get Address (ADDR)">Get Address</button>
       <div class="sep"></div>
-      <button id="toggleMapBtn" title="Toggle Map Tiles">Toggle Map</button>
+      <button id="toggleMapBtn" title="Show Satellite Map">Show Satellite</button>
       <div class="sep"></div>
       <input type="text" id="searchCoordsInput" placeholder="Search for a location..." style="background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px;width:220px;">
       <button id="searchCoordsBtn">Search</button>
@@ -137,9 +163,16 @@
     <div class="sidebar">
       <div class="card">
         <h3>Properties</h3>
-        <div class="row"><label>Selection</label><input type="text" id="propType" value="No selection" readonly></div>
-        <div class="row"><label>Layer</label><select id="propLayer"></select></div>
-        <div class="row"><label>Color</label><input type="color" id="propColor" value="#e6e9ef" /></div>
+        <div id="propertiesPanel">
+            <div class="row"><label for="propType">Selection</label><input type="text" id="propType" value="No selection" readonly></div>
+            <div class="row"><label for="propColor">Color</label><input type="color" id="propColor" value="#e6e9ef" disabled></div>
+            <div class="row"><label for="propLayer">Layer</label><select id="propLayer" disabled></select></div>
+            <div class="row"><label for="propLinetype">Linetype</label><select id="propLinetype" disabled></select></div>
+            <div class="row"><label for="propLinetypeScale">Linetype scale</label><input type="number" id="propLinetypeScale" value="1.0" step="0.1" disabled></div>
+            <div class="row"><label for="propLineweight">Lineweight</label><select id="propLineweight" disabled></select></div>
+            <div class="row"><label for="propTransparency">Transparency</label><input type="number" id="propTransparency" value="0" min="0" max="90" disabled></div>
+            <div class="row"><label for="propThickness">Thickness</label><input type="number" id="propThickness" value="0.0" step="0.1" disabled></div>
+        </div>
       </div>
       <div class="card">
         <h3>Layers</h3>
@@ -165,7 +198,6 @@
         <!-- Menu items will be added here dynamically -->
     </div>
 
-
     <div class="status">
       <div id="cursorPos">0.00000, 0.00000</div>
       <div>
@@ -175,6 +207,31 @@
       </div>
     </div>
   </div>
+
+  <div id="vectorizeModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-content">
+        <h3>Image Vectorization Settings</h3>
+        <div class="row">
+            <label for="cannyThreshold1">Canny Threshold 1</label>
+            <input type="range" id="cannyThreshold1" min="0" max="255" value="50">
+            <span id="cannyThreshold1Value">50</span>
+        </div>
+        <div class="row">
+            <label for="cannyThreshold2">Canny Threshold 2</label>
+            <input type="range" id="cannyThreshold2" min="0" max="255" value="150">
+            <span id="cannyThreshold2Value">150</span>
+        </div>
+        <div class="row">
+            <label for="epsilon">Simplification</label>
+            <input type="range" id="epsilon" min="0.1" max="10" step="0.1" value="2.0">
+            <span id="epsilonValue">2.0</span>
+        </div>
+        <div class="row" style="justify-content: flex-end; gap: 12px;">
+            <button id="cancelVectorizeBtn">Cancel</button>
+            <button id="startVectorizeBtn">Trace Image</button>
+        </div>
+    </div>
+</div>
 
 <script>
 (() => {
@@ -186,18 +243,26 @@
   const tooltip = document.getElementById('tooltip');
   const cursorPosEl = document.getElementById('cursorPos');
   const layersDiv = document.getElementById('layers');
-  const layerSelect = document.getElementById('propLayer');
-  const colorInput = document.getElementById('propColor');
-  const typeInput = document.getElementById('propType');
-  const mapContainer = document.getElementById('map');
   const fileInput = document.getElementById('fileInput');
   const contextMenu = document.getElementById('contextMenu');
+  const propertiesPanel = document.getElementById('propertiesPanel');
 
 
   // --- GLOBAL STATE ---
+  let isCvReady = false;
   const state = {
     ents: [],
     layers: [{name:'0', color:'#e6e9ef', visible:true, locked:false}],
+    linetypes: [
+        { name: 'ByLayer', pattern: [] },
+        { name: 'Continuous', pattern: [] },
+        { name: 'Dashed', pattern: [10, 5] },
+        { name: 'Dotted', pattern: [2, 4] },
+        { name: 'Dash-Dot', pattern: [10, 5, 2, 5] },
+    ],
+    lineweights: [
+        'ByLayer', 'Default', '0.05', '0.09', '0.13', '0.15', '0.18', '0.20', '0.25', '0.30', '0.35', '0.40', '0.50', '0.60', '0.70', '0.80', '0.90', '1.00', '1.20', '1.50', '2.00'
+    ],
     currentLayer: '0',
     selection: [],
     history: [],
@@ -215,23 +280,48 @@
     clipboard: { data: [], basePoint: null },
   };
   let nextId = 1;
+
+  // --- MAP & VIEW STATE ---
   let leafletMap = null;
-  let mapTileLayer = null;
-  let isMapVisible = false;
+  let mapTileLayerSatellite = null;
+  let mapTileLayerStreet = null;
+  let mapState = 0; // 0: Off, 1: Satellite, 2: Street
 
   // --- INITIALIZATION ---
   function init() {
       resize();
       initMap();
+      populateStaticSelects();
       bindEvents();
       refreshLayersUI();
       updatePropertiesPanel();
       updateStatusBar();
       snapshot();
-      toggleMap();
       draw();
       cmdInput.focus();
+      document.getElementById('opencv-script').onload = () => {
+          isCvReady = true;
+          console.log("OpenCV.js is ready.");
+          logToHistory("Map to CAD engine loaded.");
+      };
   }
+   function populateStaticSelects() {
+        const linetypeSelect = document.getElementById('propLinetype');
+        state.linetypes.forEach(lt => {
+            const opt = document.createElement('option');
+            opt.value = lt.name;
+            opt.textContent = lt.name;
+            linetypeSelect.appendChild(opt);
+        });
+
+        const lineweightSelect = document.getElementById('propLineweight');
+        state.lineweights.forEach(lw => {
+            const opt = document.createElement('option');
+            opt.value = lw;
+            opt.textContent = lw;
+            lineweightSelect.appendChild(opt);
+        });
+    }
 
   function initMap() {
     leafletMap = L.map('map', {
@@ -239,7 +329,14 @@
         attributionControl: false,
     }).setView([40.7128, -74.0060], 13);
 
-    mapTileLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
+    mapTileLayerSatellite = L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
+        maxZoom: 21,
+        subdomains:['mt0','mt1','mt2','mt3'],
+        attribution: '&copy; Google Maps'
+    });
+    
+    // UPDATED: Using Google Maps street layer
+    mapTileLayerStreet = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
         maxZoom: 21,
         subdomains:['mt0','mt1','mt2','mt3'],
         attribution: '&copy; Google Maps'
@@ -280,6 +377,21 @@
 
     return { y: lat2 * 180/Math.PI, x: (lon2 * 180/Math.PI + 540) % 360 - 180 };
   }
+
+  function getBearing(p1, p2) { // p = {x: lon, y: lat}
+      const lat1 = p1.y * Math.PI / 180;
+      const lon1 = p1.x * Math.PI / 180;
+      const lat2 = p2.y * Math.PI / 180;
+      const lon2 = p2.x * Math.PI / 180;
+
+      const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
+      const x = Math.cos(lat1) * Math.sin(lat2) -
+                Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
+      const brng = Math.atan2(y, x);
+      const brngDegrees = (brng * 180 / Math.PI + 360) % 360; // in degrees
+      return brngDegrees;
+  }
+
 
   function orthoPoint(from, to) {
     const fromScreen = worldToScreen(from);
@@ -357,6 +469,8 @@
     'rotate': { alias: 'ro', execute: startRotateCommand, prompt: "Specify base point:" },
     'scale': { alias: 'sc', execute: startScaleCommand, prompt: "Specify base point:" },
     'getaddress': { alias: 'addr', execute: startGetAddressCommand, prompt: "Select a closed polyline or specify a point:" },
+    'imagetext': { alias: 'it', execute: startImageTextCommand, prompt: "Specify first corner of text area:" },
+    'maptocad': { alias: 'mtc', execute: startMapToCadCommand, prompt: "Specify first corner of boundary:" },
     'mirror': { alias: 'mi', execute: startMirrorCommand, prompt: "Specify first point of mirror line:" },
     'stretch': { alias: 's', execute: startStretchCommand, prompt: "Select objects to stretch by crossing-window..." },
     'trim': { alias: 'tr', execute: startTrimCommand, prompt: "Select cutting edges... Then press Enter." },
@@ -477,6 +591,244 @@
     };
   }
 
+  // --- OCR Command Implementation ---
+  function startImageTextCommand() {
+      if (mapState !== 2) { // Works best with clean street maps
+          logToHistory("Image Text command requires the Street Map to be active. Please switch maps and try again.");
+          cancelCommand();
+          return;
+      }
+
+      const cmd = state.activeCommand;
+      cmd.execute = () => {
+          switch (cmd.step) {
+              case 0:
+                  const p1 = getPointInput();
+                  if (p1) {
+                      cmd.data.p1_screen = worldToScreen(p1);
+                      setPrompt("Specify second corner:");
+                      cmd.step++;
+                  }
+                  break;
+              case 1:
+                  const p2 = getPointInput();
+                  if (p2) {
+                      cmd.data.p2_screen = worldToScreen(p2);
+                      performOcrOnArea(cmd.data.p1_screen, cmd.data.p2_screen);
+                      completeCommand();
+                  }
+                  break;
+          }
+      };
+  }
+
+  async function performOcrOnArea(p1_s, p2_s) {
+      if (typeof html2canvas === 'undefined' || typeof Tesseract === 'undefined') {
+          logToHistory("Error: Required libraries (html2canvas or Tesseract.js) are not loaded.");
+          return;
+      }
+      logToHistory("Capturing map area for OCR...");
+
+      const rect = {
+          x: Math.min(p1_s.x, p2_s.x),
+          y: Math.min(p1_s.y, p2_s.y),
+          width: Math.abs(p1_s.x - p2_s.x),
+          height: Math.abs(p1_s.y - p2_s.y)
+      };
+
+      if (rect.width < 10 || rect.height < 10) {
+          logToHistory("Selected area is too small for OCR.");
+          return;
+      }
+
+      try {
+          const mapElement = document.getElementById('map');
+          const canvas = await html2canvas(mapElement, { useCORS: true, logging: false });
+
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = rect.width;
+          cropCanvas.height = rect.height;
+          const cropCtx = cropCanvas.getContext('2d');
+          cropCtx.drawImage(canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+          
+          const imageForOcr = cropCanvas.toDataURL();
+
+          logToHistory("Recognizing text... (this may take a moment)");
+          const worker = await Tesseract.createWorker('eng');
+          const { data: { lines } } = await worker.recognize(imageForOcr);
+          await worker.terminate();
+
+          if (lines.length === 0) {
+              logToHistory("No text found in the selected area.");
+              return;
+          }
+
+          logToHistory(`Found ${lines.length} line(s) of text.`);
+          let createdCount = 0;
+
+          lines.forEach(line => {
+              if (line.confidence < 50) return;
+              
+              const bbox = line.bbox;
+              const centerX_screen = rect.x + (bbox.x0 + bbox.x1) / 2;
+              const centerY_screen = rect.y + (bbox.y0 + bbox.y1) / 2;
+              const insertionPoint_world = screenToWorld({ x: centerX_screen, y: centerY_screen });
+              const bboxHeight_screen = bbox.y1 - bbox.y0;
+
+              pushEnt({
+                  type: 'text',
+                  textString: line.text.trim(),
+                  insertionPoint: insertionPoint_world,
+                  height: bboxHeight_screen,
+                  layer: state.currentLayer,
+                  props: curProps()
+              });
+              createdCount++;
+          });
+
+          if (createdCount > 0) {
+              logToHistory(`Created ${createdCount} text object(s).`);
+              snapshot();
+              draw();
+          } else {
+              logToHistory("No text with sufficient confidence was found.");
+          }
+
+      } catch (err) {
+          logToHistory("Error during OCR process. See console for details.");
+          console.error("Image Text Error:", err);
+      }
+  }
+
+  // --- MAP TO CAD COMMAND ---
+  function startMapToCadCommand() {
+    if (!isCvReady) {
+        logToHistory("Map to CAD engine (OpenCV.js) is still loading. Please wait a moment and try again.");
+        cancelCommand();
+        return;
+    }
+    if (mapState !== 2) {
+        logToHistory("Map to CAD command requires the Google Street Map to be active. Please switch maps and try again.");
+        cancelCommand();
+        return;
+    }
+
+    const cmd = state.activeCommand;
+    cmd.execute = () => {
+        switch (cmd.step) {
+            case 0:
+                const p1 = getPointInput();
+                if (p1) {
+                    cmd.data.p1_screen = worldToScreen(p1);
+                    setPrompt("Specify second corner of boundary:");
+                    cmd.step++;
+                }
+                break;
+            case 1:
+                const p2 = getPointInput();
+                if (p2) {
+                    cmd.data.p2_screen = worldToScreen(p2);
+                    document.getElementById('vectorizeModal').style.display = 'flex';
+                    // Execution pauses here until modal is actioned
+                }
+                break;
+        }
+    };
+  }
+
+  async function performMapVectorization() {
+    if (!state.activeCommand || state.activeCommand.name !== 'maptocad') return;
+
+    const { p1_screen, p2_screen } = state.activeCommand.data;
+    const t1 = parseInt(document.getElementById('cannyThreshold1').value);
+    const t2 = parseInt(document.getElementById('cannyThreshold2').value);
+    const epsilon = parseFloat(document.getElementById('epsilon').value);
+
+    logToHistory(`Starting vectorization... T1:${t1}, T2:${t2}, E:${epsilon}`);
+    setPrompt("Processing image... Please wait.");
+
+    const rect = {
+        x: Math.min(p1_screen.x, p2_screen.x),
+        y: Math.min(p1_screen.y, p2_screen.y),
+        width: Math.abs(p1_screen.x - p2_screen.x),
+        height: Math.abs(p1_screen.y - p2_screen.y)
+    };
+
+    if (rect.width < 10 || rect.height < 10) {
+        logToHistory("Selected boundary is too small.");
+        completeCommand();
+        return;
+    }
+
+    let src, gray, edges, contours, hierarchy;
+    try {
+        const mapElement = document.getElementById('map');
+        const fullCanvas = await html2canvas(mapElement, { useCORS: true, logging: false });
+        
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = rect.width;
+        cropCanvas.height = rect.height;
+        const cropCtx = cropCanvas.getContext('2d');
+        cropCtx.drawImage(fullCanvas, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
+        
+        src = cv.imread(cropCanvas);
+        gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+        cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+        
+        edges = new cv.Mat();
+        cv.Canny(gray, edges, t1, t2, 3, false);
+        
+        contours = new cv.MatVector();
+        hierarchy = new cv.Mat();
+        cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+        let createdCount = 0;
+        for (let i = 0; i < contours.size(); ++i) {
+            const cnt = contours.get(i);
+            const area = cv.contourArea(cnt, false);
+            if (area < 20) continue; 
+
+            let approx = new cv.Mat();
+            cv.approxPolyDP(cnt, approx, epsilon, true);
+
+            const points_w = [];
+            for (let j = 0; j < approx.data32S.length; j += 2) {
+                const px = approx.data32S[j];
+                const py = approx.data32S[j+1];
+                const screenPt = { x: rect.x + px, y: rect.y + py };
+                points_w.push(screenToWorld(screenPt));
+            }
+
+            if (points_w.length > 1) {
+                pushEnt({
+                    type: 'polyline',
+                    pts: points_w,
+                    closed: false,
+                    layer: state.currentLayer,
+                    props: curProps()
+                });
+                createdCount++;
+            }
+            approx.delete();
+        }
+
+        snapshot();
+        logToHistory(`Vectorization complete. Created ${createdCount} polylines.`);
+    } catch (err) {
+        logToHistory("Error during vectorization. See console for details.");
+        console.error("Vectorization Error:", err);
+    } finally {
+        if (src) src.delete();
+        if (gray) gray.delete();
+        if (edges) edges.delete();
+        if (contours) contours.delete();
+        if (hierarchy) hierarchy.delete();
+    }
+    completeCommand();
+  }
+
+
   function startLineCommand() {
     const cmd = state.activeCommand;
     cmd.execute = () => {
@@ -592,14 +944,9 @@
       cmd.processInput = (input) => {
           if (cmd.step === 0) {
               const dist = parseFloat(input);
-              if (!isNaN(dist)) {
-                  cmd.data.distance = dist; // Keep original meters for circle
-                  // Convert meters to pixels for visual consistency on screen
-                  const mapScale = leafletMap.getZoomScale(leafletMap.getZoom());
-                  const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
-                  cmd.data.pixelDistance = Math.abs(dist / metersPerPixel);
-
-                  logToHistory(`Offset distance: ${dist}m`);
+              if (!isNaN(dist) && dist !== 0) {
+                  cmd.data.distance = Math.abs(dist);
+                  logToHistory(`Offset distance: ${Math.abs(dist)}m`);
                   setPrompt("Select object to offset:");
                   cmd.step = 1;
               } else {
@@ -626,80 +973,108 @@
               let newEnt = null;
 
               if (sourceEnt.type === 'circle') {
-                  const sidePoint_s = worldToScreen(sidePoint);
-                  const center_s = worldToScreen(sourceEnt.c);
-                  const distToCenter = distScreen(sidePoint_s, center_s);
-                  const edgeW = getDestinationPoint(sourceEnt.c, sourceEnt.r, 0);
-                  const edgeS = worldToScreen(edgeW);
-                  const radius_s = distScreen(center_s, edgeS);
-                  const sign = distToCenter > radius_s ? 1 : -1;
-                  newEnt = {
-                      type: 'circle', c: sourceEnt.c,
-                      r: sourceEnt.r + (cmd.data.distance * sign),
-                      layer: sourceEnt.layer, props: { ...sourceEnt.props }
-                  };
-              } else if (sourceEnt.type === 'line' || sourceEnt.type === 'polyline') {
-                  const pts = sourceEnt.type === 'line' ? [sourceEnt.a, sourceEnt.b] : sourceEnt.pts;
-                  const pts_s = pts.map(worldToScreen);
-                  const newPts_w = [];
-                  const offset_s = cmd.data.pixelDistance;
-
-                  // Determine side using the first segment
-                  const sidePoint_s = worldToScreen(sidePoint);
-                  const normal = { x: pts_s[1].y - pts_s[0].y, y: pts_s[0].x - pts_s[1].x };
-                  const mouseVec = { x: sidePoint_s.x - pts_s[0].x, y: sidePoint_s.y - pts_s[0].y };
-                  const side = (mouseVec.x * normal.x + mouseVec.y * normal.y) > 0 ? 1 : -1;
-
-                  const offsetSegments = [];
-                  for (let i = 0; i < pts_s.length - 1; i++) {
-                      const p1 = pts_s[i], p2 = pts_s[i+1];
-                      const d = distScreen(p1, p2);
-                      if (d < 1e-6) continue;
-                      const nx = (p2.y - p1.y) / d * side;
-                      const ny = (p1.x - p2.x) / d * side;
-                      offsetSegments.push([
-                          { x: p1.x + offset_s * nx, y: p1.y + offset_s * ny },
-                          { x: p2.x + offset_s * nx, y: p2.y + offset_s * ny }
-                      ]);
-                  }
-
-                  if (offsetSegments.length === 0) { cancelCommand(); return; }
-
-                  const finalPts_s = [offsetSegments[0][0]];
-                  for (let i = 0; i < offsetSegments.length - 1; i++) {
-                      const s1 = offsetSegments[i]; const s2 = offsetSegments[i+1];
-                      const intersection = intersectLineLineScreen(s1[0], s1[1], s2[0], s2[1], true);
-                      if (intersection) { finalPts_s.push(intersection); }
-                      else { finalPts_s.push(s1[1]); } // Parallel, just add the point
-                  }
-                  finalPts_s.push(offsetSegments[offsetSegments.length - 1][1]);
+                  const centerLatLng = L.latLng(sourceEnt.c.y, sourceEnt.c.x);
+                  const sidePointLatLng = L.latLng(sidePoint.y, sidePoint.x);
+                  const distToCenterMeters = centerLatLng.distanceTo(sidePointLatLng);
                   
-                  newEnt = {
-                      type: sourceEnt.type === 'line' ? 'line' : 'polyline',
-                      layer: sourceEnt.layer, props: { ...sourceEnt.props }
-                  };
-                  if(newEnt.type === 'line') {
-                      newEnt.a = screenToWorld(finalPts_s[0]);
-                      newEnt.b = screenToWorld(finalPts_s[1]);
+                  const sign = distToCenterMeters > sourceEnt.r ? 1 : -1;
+                  const newRadius = sourceEnt.r + (cmd.data.distance * sign);
+
+                  if (newRadius > 0) {
+                    newEnt = {
+                        type: 'circle', c: sourceEnt.c,
+                        r: newRadius,
+                        layer: sourceEnt.layer, props: { ...sourceEnt.props }
+                    };
                   } else {
-                      newEnt.pts = finalPts_s.map(screenToWorld);
-                      newEnt.closed = sourceEnt.closed || false;
+                    logToHistory("Offset results in an invalid circle radius.");
+                  }
+              } else if (sourceEnt.type === 'line' || sourceEnt.type === 'polyline') {
+                  const isClosed = sourceEnt.closed || false;
+                  let pts_w = sourceEnt.type === 'line' ? [sourceEnt.a, sourceEnt.b] : [...sourceEnt.pts];
+                  if (pts_w.length < 2) { cancelCommand(); return; }
+
+                  if (isClosed && pts_w.length > 2 && (pts_w[0].x === pts_w[pts_w.length-1].x && pts_w[0].y === pts_w[pts_w.length-1].y)) {
+                      pts_w.pop(); // Remove duplicate closing point for easier iteration
+                  }
+                  
+                  // 1. Determine side using a screen-space cross product
+                  const p1_s = worldToScreen(pts_w[0]);
+                  const p2_s = worldToScreen(pts_w[1]);
+                  const sidePoint_s = worldToScreen(sidePoint);
+                  const cross_product = (p2_s.x - p1_s.x) * (sidePoint_s.y - p1_s.y) - (p2_s.y - p1_s.y) * (sidePoint_s.x - p1_s.x);
+                  const offsetAngle = cross_product > 0 ? -90 : 90;
+
+                  // 2. Create parallel offset segments in world coordinates
+                  const offsetSegments_w = [];
+                  for (let i = 0; i < pts_w.length; i++) {
+                      const p1 = pts_w[i];
+                      const p2 = pts_w[(i + 1) % pts_w.length]; 
+                      
+                      if (!isClosed && i === pts_w.length - 1) break;
+
+                      const segmentBearing = getBearing(p1, p2);
+                      const normalBearing = (segmentBearing + offsetAngle + 360) % 360;
+                      
+                      const new_p1 = getDestinationPoint(p1, cmd.data.distance, normalBearing);
+                      const new_p2 = getDestinationPoint(p2, cmd.data.distance, normalBearing);
+                      offsetSegments_w.push([new_p1, new_p2]);
+                  }
+
+                  if (offsetSegments_w.length > 0) {
+                      let finalPts_w;
+                      if (!isClosed) { // Open polyline or a single line segment
+                          const finalPts_s = [];
+                          finalPts_s.push(worldToScreen(offsetSegments_w[0][0]));
+                          for (let i = 0; i < offsetSegments_w.length - 1; i++) {
+                              const s1_s = offsetSegments_w[i].map(worldToScreen);
+                              const s2_s = offsetSegments_w[i+1].map(worldToScreen);
+                              const intersection = intersectLineLineScreen(s1_s[0], s1_s[1], s2_s[0], s2_s[1], true);
+                              finalPts_s.push(intersection || s1_s[1]);
+                          }
+                          finalPts_s.push(worldToScreen(offsetSegments_w[offsetSegments_w.length - 1][1]));
+                          finalPts_w = finalPts_s.map(screenToWorld);
+                      } else { // Closed polyline
+                          const finalPts_s = [];
+                          for (let i = 0; i < offsetSegments_w.length; i++) {
+                              const s1_w = offsetSegments_w[i];
+                              const s2_w = offsetSegments_w[(i + 1) % offsetSegments_w.length];
+                              const s1_s = s1_w.map(worldToScreen);
+                              const s2_s = s2_w.map(worldToScreen);
+                              const intersection = intersectLineLineScreen(s1_s[0], s1_s[1], s2_s[0], s2_s[1], true);
+                              finalPts_s.push(intersection || s1_s[1]);
+                          }
+                          finalPts_s.push(finalPts_s[0]); // Close the shape
+                          finalPts_w = finalPts_s.map(screenToWorld);
+                      }
+
+                      newEnt = { layer: sourceEnt.layer, props: { ...sourceEnt.props } };
+                      if (sourceEnt.type === 'line') {
+                          newEnt.type = 'line';
+                          newEnt.a = finalPts_w[0];
+                          newEnt.b = finalPts_w[1];
+                      } else {
+                          newEnt.type = 'polyline';
+                          newEnt.pts = finalPts_w;
+                          newEnt.closed = isClosed;
+                      }
                   }
               }
 
               if (newEnt) {
                   pushEnt(newEnt);
-              } else {
+              } else if (!sourceEnt.type.match(/^(circle|line|polyline)$/)) {
                   logToHistory("Offset for this entity type is not yet implemented.");
               }
 
               logToHistory("Offset complete.");
               setPrompt("Select object to offset or press Enter to exit:");
               cmd.data.selectedEnt = null;
-              cmd.step = 1;
+              cmd.step = 1; // Go back to selecting another object
               draw();
           }
       };
+      
       cmd.processSubCommand = (input) => { if (input.trim() === '') completeCommand(); }
   }
 
@@ -1399,8 +1774,27 @@
     fileInput.addEventListener('change', openDrawing);
     layersDiv.addEventListener('input', onLayerChange);
 
-    layerSelect.oninput = () => updateSelectedEnts('layer', layerSelect.value);
-    colorInput.oninput = () => updateSelectedEnts('color', colorInput.value);
+    propertiesPanel.addEventListener('input', (e) => {
+        if (e.target.id.startsWith('prop')) {
+            const prop = e.target.id.replace('prop', '').toLowerCase();
+            updateSelectedEnts(prop, e.target.value);
+        }
+    });
+      
+    // --- Modal Event Handlers ---
+    const modal = document.getElementById('vectorizeModal');
+    document.getElementById('startVectorizeBtn').onclick = () => {
+        modal.style.display = 'none';
+        performMapVectorization();
+    };
+    document.getElementById('cancelVectorizeBtn').onclick = () => {
+        modal.style.display = 'none';
+        logToHistory("Map to CAD cancelled.");
+        cancelCommand();
+    };
+    document.getElementById('cannyThreshold1').oninput = e => { document.getElementById('cannyThreshold1Value').textContent = e.target.value; };
+    document.getElementById('cannyThreshold2').oninput = e => { document.getElementById('cannyThreshold2Value').textContent = e.target.value; };
+    document.getElementById('epsilon').oninput = e => { document.getElementById('epsilonValue').textContent = e.target.value; };
   }
 
   async function searchLocation() {
@@ -1638,23 +2032,48 @@
     const r = canvas.getBoundingClientRect();
     ctx.clearRect(0,0,r.width,r.height);
 
-    if(state.grid && !isMapVisible) drawGrid();
+    if(state.grid && mapState === 0) drawGrid();
     for(const e of state.ents){
-        const L=state.layers.find(l=>l.name===e.layer)||{color:'#e6e9ef', visible:true};
-        if(!L.visible) continue;
-        const color = (e.props && e.props.color) ? e.props.color : L.color;
-        drawEnt(e, { ...e.props, color: color }, isSelected(e.id));
+        const layer = state.layers.find(l=>l.name===e.layer) || {color:'#e6e9ef', visible:true};
+        if(!layer.visible) continue;
+        
+        const effectiveProps = {
+            color: (e.props && e.props.color && e.props.color !== 'ByLayer') ? e.props.color : layer.color,
+            linetype: (e.props && e.props.linetype && e.props.linetype !== 'ByLayer') ? e.props.linetype : 'Continuous', // Assuming layer linetype is continuous
+            lineweight: (e.props && e.props.lineweight && e.props.lineweight !== 'ByLayer') ? e.props.lineweight : 'Default', // Assuming layer lineweight is default
+            linetypeScale: (e.props && e.props.linetypeScale) ? e.props.linetypeScale : 1.0,
+            transparency: (e.props && e.props.transparency) ? e.props.transparency : 0,
+        };
+        
+        drawEnt(e, effectiveProps, isSelected(e.id));
     }
 
     drawSelectionGrips();
     drawTemporaryGeometry();
     drawSelectionBox();
     if(state.snapPoint) drawSnapMarker();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1.0;
   }
 
   function drawEnt(e, props, selected) {
-    ctx.lineWidth = selected && !state.activeCommand ? 2 : 1;
-    ctx.strokeStyle = selected && !state.activeCommand ? '#ff8800' : props.color;
+    const lwValue = props.lineweight === 'Default' ? 1 : parseFloat(props.lineweight);
+    ctx.lineWidth = selected && !state.activeCommand ? lwValue + 1 : lwValue;
+    
+    // Convert hex color and apply transparency
+    const hex = props.color.startsWith('#') ? props.color : '#FFFFFF';
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const alpha = 1.0 - (props.transparency / 100);
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
+
+    const linetype = state.linetypes.find(lt => lt.name === props.linetype);
+    if(linetype && linetype.pattern.length > 0) {
+        ctx.setLineDash(linetype.pattern.map(p => p * (props.linetypeScale || 1.0)));
+    } else {
+        ctx.setLineDash([]);
+    }
 
     if (e.type === 'line') {
         ctx.beginPath();
@@ -1677,6 +2096,7 @@
         for(let i=1; i<e.pts.length; i++) { const p2 = worldToScreen(e.pts[i]); ctx.lineTo(p2.x, p2.y); }
         ctx.stroke();
     } else if (e.type === 'text') {
+        ctx.setLineDash([]); // Text should not be dashed
         const p = worldToScreen(e.insertionPoint);
         const finalColor = selected && !state.activeCommand ? '#ff8800' : props.color;
         ctx.font = `bold ${e.height || 12}px sans-serif`;
@@ -1685,7 +2105,7 @@
         const textMetrics = ctx.measureText(e.textString);
         ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
         ctx.fillRect(p.x - 2, p.y - (e.height || 12) - 2, textMetrics.width + 4, (e.height || 12) + 4);
-        ctx.fillStyle = finalColor;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
         ctx.fillText(e.textString, p.x, p.y);
     }
   }
@@ -1717,6 +2137,7 @@
 
   function drawSelectionGrips() {
       if (state.selection.length === 0 || state.activeCommand) return;
+      ctx.setLineDash([]);
       const gripSize = 8;
 
       for (const id of state.selection) {
@@ -1771,6 +2192,18 @@
       if (name === 'rect' && data.start) {
           const p1 = worldToScreen(data.start); const p2 = worldToScreen(currentPt);
           ctx.beginPath(); ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y); ctx.stroke();
+      } else if (name === 'imagetext' && data.p1_screen) {
+          const p1 = data.p1_screen;
+          const p2 = worldToScreen(currentPt);
+          ctx.beginPath();
+          ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
+          ctx.stroke();
+      } else if (name === 'maptocad' && data.p1_screen) {
+          const p1 = data.p1_screen;
+          const p2_s = worldToScreen(currentPt);
+          ctx.beginPath();
+          ctx.rect(p1.x, p1.y, p2_s.x - p1.x, p2_s.y - p1.y);
+          ctx.stroke();
       } else if (name === 'circle' && data.center) {
           const radiusMeters = L.latLng(data.center.y, data.center.x).distanceTo(L.latLng(currentPt.y, currentPt.x));
           ctx.beginPath();
@@ -1788,7 +2221,7 @@
               const ent = state.ents.find(e => e.id === id); if (!ent) continue;
               const previewEnt = JSON.parse(JSON.stringify(ent));
               transformPoints(previewEnt, moveFunc);
-              drawEnt(previewEnt, { color: '#999' }, false);
+              drawEnt(previewEnt, { color: '#999', lineweight: 'Default', linetype: 'Continuous', transparency: 0 }, false);
           }
       } else if (name === 'paste' && state.clipboard.basePoint) {
            const { data: clipboardEnts, basePoint } = state.clipboard;
@@ -1798,7 +2231,7 @@
            for (const ent of clipboardEnts) {
                const previewEnt = JSON.parse(JSON.stringify(ent));
                transformPoints(previewEnt, moveFunc);
-               drawEnt(previewEnt, { color: '#999' }, false);
+               drawEnt(previewEnt, { color: '#999', lineweight: 'Default', linetype: 'Continuous', transparency: 0 }, false);
            }
       } else if ((name === 'rotate' || name === 'scale') && data.base && data.ref) {
           const base_s = worldToScreen(data.base); const ref_s = worldToScreen(data.ref); const current_s = worldToScreen(currentPt);
@@ -1822,7 +2255,7 @@
               const previewEnt = JSON.parse(JSON.stringify(ent));
               transformPoints(previewEnt, transformFunc);
               if (previewEnt.type === 'circle' && name === 'scale') { previewEnt.r *= scaleFactor; }
-              drawEnt(previewEnt, { color: '#999' }, false);
+              drawEnt(previewEnt, { color: '#999', lineweight: 'Default', linetype: 'Continuous', transparency: 0 }, false);
           }
       }
 
@@ -1830,7 +2263,11 @@
   }
 
 
-  function drawGrid() { /* Grid is disabled in map mode for simplicity */ }
+  function drawGrid() {
+      if(!state.grid) return;
+      const canvasWrap = document.getElementById('canvasWrap');
+      canvasWrap.style.background = 'var(--bg)';
+  }
 
   function drawSnapMarker() {
       if(!state.snapPoint) return;
@@ -2189,7 +2626,41 @@
   }
 
   function toggleState(mode) { state[mode] = !state[mode]; logToHistory(`${mode.toUpperCase()} <${state[mode] ? 'ON' : 'OFF'}>`); updateStatusBar(); draw(); }
-  function toggleMap() { isMapVisible = !isMapVisible; if(isMapVisible) { mapTileLayer.addTo(leafletMap); } else { leafletMap.removeLayer(mapTileLayer); } canvas.style.backgroundColor = isMapVisible ? 'transparent' : '#212830'; draw(); }
+  function toggleMap() {
+      mapState = (mapState + 1) % 3; // Cycle through 0, 1, 2
+      
+      leafletMap.removeLayer(mapTileLayerSatellite);
+      leafletMap.removeLayer(mapTileLayerStreet);
+      const canvasWrap = document.getElementById('canvasWrap');
+      const toggleBtn = document.getElementById('toggleMapBtn');
+
+      switch (mapState) {
+          case 0: // Off
+              canvas.style.backgroundColor = 'var(--bg)';
+              canvasWrap.style.background = 'var(--bg)';
+              toggleBtn.textContent = 'Show Satellite';
+              toggleBtn.title = 'Show Satellite Map';
+              logToHistory("Map hidden.");
+              break;
+          case 1: // Satellite
+              mapTileLayerSatellite.addTo(leafletMap);
+              canvas.style.backgroundColor = 'transparent';
+              canvasWrap.style.background = 'transparent';
+              toggleBtn.textContent = 'Show Street Map';
+              toggleBtn.title = 'Switch to Street Map';
+              logToHistory("Satellite map enabled.");
+              break;
+          case 2: // Street
+              mapTileLayerStreet.addTo(leafletMap);
+              canvas.style.backgroundColor = 'transparent';
+               canvasWrap.style.background = '#FFFFFF';
+              toggleBtn.textContent = 'Hide Map';
+              toggleBtn.title = 'Hide Map Tiles';
+              logToHistory("Street map enabled.");
+              break;
+      }
+      draw();
+  }
   function updateStatusBar() { const t = (id, a) => document.getElementById(id).classList.toggle('active',a); t('gridToggle', state.grid); t('orthoToggle', state.ortho); t('osnapToggle', state.osnap); }
   function resize() { const r=canvas.parentElement.getBoundingClientRect(); canvas.width=r.width; canvas.height=r.height; if(leafletMap) leafletMap.invalidateSize(); draw(); }
   function updateTooltipPosition(e) { tooltip.style.left = `${e.clientX + 20}px`; tooltip.style.top = `${e.clientY + 20}px`; }
@@ -2197,41 +2668,53 @@
   function hideTooltip() { tooltip.style.display = 'none'; }
 
   function updatePropertiesPanel() {
-      layerSelect.innerHTML = '';
+      const propInputs = {
+          type: document.getElementById('propType'),
+          color: document.getElementById('propColor'),
+          layer: document.getElementById('propLayer'),
+          linetype: document.getElementById('propLinetype'),
+          linetypeScale: document.getElementById('propLinetypeScale'),
+          lineweight: document.getElementById('propLineweight'),
+          transparency: document.getElementById('propTransparency'),
+          thickness: document.getElementById('propThickness'),
+      };
+
+      propInputs.layer.innerHTML = '';
       state.layers.forEach(l => {
           const opt = document.createElement('option');
           opt.value = l.name;
           opt.textContent = l.name;
-          layerSelect.appendChild(opt);
+          propInputs.layer.appendChild(opt);
       });
 
       if (state.selection.length === 0) {
-          typeInput.value = 'No selection';
-          layerSelect.value = state.currentLayer;
+          propInputs.type.value = 'No selection';
+          propInputs.layer.value = state.currentLayer;
           const currentLayerObj = state.layers.find(l => l.name === state.currentLayer);
-          colorInput.value = currentLayerObj ? currentLayerObj.color : '#e6e9ef';
-          layerSelect.disabled = true;
-          colorInput.disabled = true;
+          propInputs.color.value = currentLayerObj ? currentLayerObj.color : '#e6e9ef';
+          propInputs.linetype.value = 'ByLayer';
+          propInputs.lineweight.value = 'ByLayer';
+          propInputs.linetypeScale.value = 1.0;
+          propInputs.transparency.value = 0;
+          propInputs.thickness.value = 0.0;
+          Object.values(propInputs).forEach(input => { if(input.id !== 'propType') input.disabled = true; });
       } else {
           const selectedEnts = state.selection.map(id => state.ents.find(e => e.id === id)).filter(Boolean);
           const firstEnt = selectedEnts[0];
+          propInputs.type.value = state.selection.length > 1 ? `Multiple (${state.selection.length})` : firstEnt.type;
 
-          typeInput.value = state.selection.length > 1 ? `Multiple (${state.selection.length})` : firstEnt.type;
+          const checkSameValue = (prop) => selectedEnts.every(e => (e.props && e.props[prop]) === (firstEnt.props && firstEnt.props[prop]));
+          const checkSameLayer = selectedEnts.every(e => e.layer === firstEnt.layer);
 
-          const allSameLayer = selectedEnts.every(e => e.layer === firstEnt.layer);
-          layerSelect.value = allSameLayer ? firstEnt.layer : '';
+          propInputs.layer.value = checkSameLayer ? firstEnt.layer : '';
+          propInputs.color.value = checkSameValue('color') && firstEnt.props.color ? firstEnt.props.color : '#ffffff';
+          propInputs.linetype.value = checkSameValue('linetype') && firstEnt.props.linetype ? firstEnt.props.linetype : 'ByLayer';
+          propInputs.lineweight.value = checkSameValue('lineweight') && firstEnt.props.lineweight ? firstEnt.props.lineweight : 'ByLayer';
+          propInputs.linetypeScale.value = checkSameValue('linetypeScale') && firstEnt.props.linetypeScale ? firstEnt.props.linetypeScale : 1.0;
+          propInputs.transparency.value = checkSameValue('transparency') && firstEnt.props.transparency ? firstEnt.props.transparency : 0;
+          propInputs.thickness.value = checkSameValue('thickness') && firstEnt.props.thickness ? firstEnt.props.thickness : 0;
 
-          const firstColor = (firstEnt.props && firstEnt.props.color) || 'ByLayer';
-          const allSameColor = selectedEnts.every(e => ((e.props && e.props.color) || 'ByLayer') === firstColor);
-          if(allSameColor && firstColor !== 'ByLayer') {
-              colorInput.value = firstColor;
-          } else {
-             const layerObj = state.layers.find(l => l.name === layerSelect.value);
-             colorInput.value = layerObj ? layerObj.color : '#ffffff';
-          }
-
-          layerSelect.disabled = false;
-          colorInput.disabled = false;
+          Object.values(propInputs).forEach(input => { if(input.id !== 'propType') input.disabled = false; });
       }
   }
 
@@ -2242,9 +2725,13 @@
           if (!ent) return;
           if (prop === 'layer') {
               ent.layer = value;
-          } else if (prop === 'color') {
+          } else {
               if (!ent.props) ent.props = {};
-              ent.props.color = value;
+              if (prop === 'linetypescale' || prop === 'transparency' || prop === 'thickness') {
+                   ent.props[prop] = parseFloat(value);
+              } else {
+                   ent.props[prop] = value;
+              }
           }
       });
       snapshot();
@@ -2277,7 +2764,16 @@
       if(p==='visible') l.visible=t.checked; else if (p==='color') l.color=t.value;
       snapshot(); draw();
   }
-  function curProps() { const l=state.layers.find(l=>l.name===state.currentLayer); return { color: l ? l.color : '#e6e9ef' }; }
+  function curProps() {
+      return {
+        color: 'ByLayer',
+        linetype: 'ByLayer',
+        lineweight: 'ByLayer',
+        linetypeScale: 1.0,
+        transparency: 0,
+        thickness: 0
+      };
+  }
   function snapshot(){ const s=JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer}); if (state.history[state.history.length-1] !== s) { state.history.push(s); if(state.history.length>50)state.history.shift(); state.future=[]; } }
   function loadState(s) {
       try {
@@ -2378,8 +2874,30 @@
 
   function exportToDxf() {
     logToHistory("Exporting to DXF...");
-    const dxf = [];
-    const p = (code, value) => dxf.push(code, value);
+    
+    // --- DXF Helper Class ---
+    class DxfWriter {
+        constructor() {
+            this.handle = 100; // Start handles from 100
+            this.dxf = [];
+            this.layerHandles = {};
+            this.linetypeHandles = {};
+        }
+        
+        add(code, value) {
+            this.dxf.push(code, value);
+        }
+
+        getHandle() {
+            return (this.handle++).toString(16).toUpperCase();
+        }
+        
+        toString() {
+            return this.dxf.join('\n');
+        }
+    }
+
+    const dxf = new DxfWriter();
 
     const hexToAci = (hex) => {
         const r = parseInt(hex.slice(1, 3), 16);
@@ -2390,66 +2908,110 @@
         if (g > 200 && r < 100 && b < 100) return 3; // Green
         if (b > 200 && r < 100 && g < 100) return 5; // Blue
         if (r > 200 && g > 200 && b < 100) return 2; // Yellow
-        return 7;
+        return 7; // Default to white
     };
 
-    p(0, 'SECTION'); p(2, 'HEADER');
-    p(9, '$ACADVER'); p(1, 'AC1009');
-    p(0, 'ENDSEC');
+    // --- SECTION: Header ---
+    dxf.add(0, 'SECTION'); dxf.add(2, 'HEADER');
+    dxf.add(9, '$ACADVER'); dxf.add(1, 'AC1009'); // R12/LT2 DXF version
+    dxf.add(9, '$HANDSEED'); dxf.add(5, dxf.handle.toString(16).toUpperCase());
+    dxf.add(0, 'ENDSEC');
 
-    p(0, 'SECTION'); p(2, 'TABLES');
-    p(0, 'TABLE'); p(2, 'LAYER');
-    state.layers.forEach(layer => {
-        p(0, 'LAYER');
-        p(2, layer.name);
-        p(70, 0);
-        p(62, hexToAci(layer.color));
-        p(6, 'Continuous');
+    // --- SECTION: Tables ---
+    dxf.add(0, 'SECTION'); dxf.add(2, 'TABLES');
+
+    // LTYPE Table
+    dxf.add(0, 'TABLE'); dxf.add(2, 'LTYPE');
+    const ltypeTableHandle = dxf.getHandle();
+    dxf.add(5, ltypeTableHandle);
+    dxf.add(330, '0'); // Owner handle
+    dxf.add(100, 'AcDbSymbolTable');
+    dxf.add(70, 3); // Number of linetypes
+
+    const linetypes = [
+        {name: 'ByBlock', desc: ''},
+        {name: 'ByLayer', desc: ''},
+        {name: 'Continuous', desc: 'Solid line'}
+    ];
+    
+    linetypes.forEach(lt => {
+        const handle = dxf.getHandle();
+        dxf.linetypeHandles[lt.name] = handle;
+        dxf.add(0, 'LTYPE'); dxf.add(5, handle); dxf.add(330, ltypeTableHandle); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLinetypeTableRecord');
+        dxf.add(2, lt.name); dxf.add(70, 0); dxf.add(3, lt.desc); dxf.add(72, 65); dxf.add(73, 0); dxf.add(40, 0.0);
     });
-    p(0, 'ENDTAB');
-    p(0, 'ENDSEC');
+    dxf.add(0, 'ENDTAB');
 
-    p(0, 'SECTION'); p(2, 'ENTITIES');
+    // LAYER Table
+    dxf.add(0, 'TABLE'); dxf.add(2, 'LAYER');
+    const layerTableHandle = dxf.getHandle();
+    dxf.add(5, layerTableHandle);
+    dxf.add(330, '0');
+    dxf.add(100, 'AcDbSymbolTable');
+    dxf.add(70, state.layers.length);
+    
+    state.layers.forEach(layer => {
+        const handle = dxf.getHandle();
+        dxf.layerHandles[layer.name] = handle;
+        dxf.add(0, 'LAYER'); dxf.add(5, handle); dxf.add(330, layerTableHandle); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLayerTableRecord');
+        dxf.add(2, layer.name); dxf.add(70, 0); dxf.add(62, hexToAci(layer.color)); dxf.add(6, 'Continuous');
+    });
+    dxf.add(0, 'ENDTAB');
+    dxf.add(0, 'ENDSEC');
+    
+    // --- SECTION: BLOCKS ---
+    dxf.add(0, 'SECTION'); dxf.add(2, 'BLOCKS');
+    dxf.add(0, 'ENDSEC');
+
+    // --- SECTION: Entities ---
+    dxf.add(0, 'SECTION'); dxf.add(2, 'ENTITIES');
     state.ents.forEach(ent => {
         const layer = state.layers.find(l => l.name === ent.layer);
         if (!layer || !layer.visible) return;
 
         if (ent.type === 'line') {
-            p(0, 'LINE');
-            p(8, ent.layer);
-            p(10, ent.a.x); p(20, ent.a.y); p(30, 0);
-            p(11, ent.b.x); p(21, ent.b.y); p(31, 0);
+            dxf.add(0, 'LINE'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbLine');
+            dxf.add(10, ent.a.x); dxf.add(20, ent.a.y); dxf.add(30, 0);
+            dxf.add(11, ent.b.x); dxf.add(21, ent.b.y); dxf.add(31, 0);
         } else if (ent.type === 'polyline' && ent.pts.length > 1) {
-            p(0, 'LWPOLYLINE');
-            p(8, ent.layer);
-            p(90, ent.pts.length);
-            p(70, ent.closed ? 1 : 0);
-            ent.pts.forEach(pt => {
-                p(10, pt.x); p(20, pt.y);
-            });
+            dxf.add(0, 'LWPOLYLINE'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbPolyline');
+            dxf.add(90, ent.pts.length);
+            dxf.add(70, ent.closed ? 1 : 0);
+            ent.pts.forEach(pt => { dxf.add(10, pt.x); dxf.add(20, pt.y); });
         } else if (ent.type === 'circle') {
             const latRad = ent.c.y * Math.PI / 180;
             const radiusInDegrees = ent.r / (111320 * Math.cos(latRad));
-            p(0, 'CIRCLE');
-            p(8, ent.layer);
-            p(10, ent.c.x); p(20, ent.c.y); p(30, 0);
-            p(40, radiusInDegrees);
+            dxf.add(0, 'CIRCLE'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbCircle');
+            dxf.add(10, ent.c.x); dxf.add(20, ent.c.y); dxf.add(30, 0);
+            dxf.add(40, radiusInDegrees);
         } else if (ent.type === 'text') {
-            p(0, 'TEXT');
-            p(8, ent.layer);
-            p(10, ent.insertionPoint.x); p(20, ent.insertionPoint.y); p(30, 0);
-            const heightInDegrees = (ent.height || 14) / (leafletMap.getZoomScale(21) * 256);
-            p(40, heightInDegrees);
-            p(1, ent.textString);
+             // Convert pixel height to an approximate degree height for DXF
+            const p1 = ent.insertionPoint;
+            const p2_screen = worldToScreen(p1);
+            p2_screen.y -= ent.height;
+            const p2_world = screenToWorld(p2_screen);
+            const heightInDegrees = Math.abs(p1.y - p2_world.y);
+
+            dxf.add(0, 'TEXT'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbText');
+            dxf.add(10, ent.insertionPoint.x); dxf.add(20, ent.insertionPoint.y); dxf.add(30, 0);
+            dxf.add(40, heightInDegrees);
+            dxf.add(1, ent.textString);
+            dxf.add(100, 'AcDbText'); 
+            dxf.add(72, 1); // Center align text to better match OCR bounding box center
+            dxf.add(11, ent.insertionPoint.x); dxf.add(21, ent.insertionPoint.y); dxf.add(31, 0);
         }
     });
-    p(0, 'ENDSEC');
-    p(0, 'EOF');
+    dxf.add(0, 'ENDSEC');
 
-    const dxfString = dxf.join('\n');
+    // --- End of File ---
+    dxf.add(0, 'EOF');
+
+    const dxfString = dxf.toString();
     const blob = new Blob([dxfString], { type: 'application/dxf' });
     saveAs(blob, 'export.dxf');
+    logToHistory("DXF export complete.");
   }
+
 
   // Run the application
   init();
