@@ -19,8 +19,8 @@
 
 <style>
   :root{
-    --bg:#212830;--panel:#2c3440;--panel2:#3a4552;--text:#e6e9ef;--muted:#9aa4b2;--accent:#4da3ff;--osnap-marker:#00ff80;
-    --grip-active: #ff3b30;
+    --bg:#212830;--panel:#2c3440;--panel2:#3a4552;--text:#e6e9ef;--muted:#9aa4b2;--accent:#00FF00;--osnap-marker:#f2ff00;
+    --grip-active: #4400a9;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial; overflow: hidden;}
@@ -2141,7 +2141,7 @@
   function drawSelectionGrips() {
       if (state.selection.length === 0 || state.activeCommand) return;
       ctx.setLineDash([]);
-      const gripSize = 8;
+      const gripSize = 16;
 
       for (const id of state.selection) {
           const ent = state.ents.find(e => e.id === id);
@@ -2274,7 +2274,7 @@
 
   function drawSnapMarker() {
       if(!state.snapPoint) return;
-      const markerSize = 8;
+      const markerSize = 16;
       const ptS = worldToScreen(state.snapPoint);
       ctx.strokeStyle = 'var(--osnap-marker)'; ctx.lineWidth = 2;
       ctx.beginPath();
