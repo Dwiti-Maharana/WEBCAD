@@ -19,8 +19,8 @@
 
 <style>
   :root{
-    --bg:#212830;--panel:#2c3440;--panel2:#3a4552;--text:#e6e9ef;--muted:#9aa4b2;--accent:#00FF00;--osnap-marker:#f2ff00;
-    --grip-active: #4400a9;
+    --bg:#212830;--panel:#2c3440;--panel2:#3a4552;--text:#e6e9ef;--muted:#9aa4b2;--accent:#ff00ff;--osnap-marker:#f2ff00;
+    --grip-active: #76a900;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial; overflow: hidden;}
@@ -45,7 +45,7 @@
   /* Modelspace Area */
   .canvas-wrap{grid-area:canvas;position:relative;background:var(--bg);overflow:hidden; cursor: none;}
   #map{position:absolute;inset:0;z-index:0;background:#1b1f26;}
-  canvas#cad{position:absolute;inset:0;z-index:1;display:block; background-color: transparent; pointer-events: auto;}
+  canvas#cad{position:absolute;inset:0;z-index:1;display:block; background-color: transparent; pointer-events: auto; cursor: none;}
 
   /* Command Line */
   .commandline-wrap { position:absolute; left: 10px; bottom: 10px; right: 10px; z-index:10; }
@@ -92,7 +92,7 @@
   /* Modal Styles */
   .modal-backdrop {
     position: fixed; inset: 0; background: rgba(0,0,0,0.5);
-    z-index: 100; display: flex; align-items: center; justify-content: center;
+    z-index: 100; display: none; align-items: center; justify-content: center;
   }
   .modal-content {
     background: var(--panel); border: 1px solid #4a5766; border-radius: 14px;
@@ -106,6 +106,12 @@
   .modal-content button:hover { background: #4e5a6e; }
   .modal-content input[type="range"] { flex: 1; }
   .modal-content .row label { width: 120px; }
+  .modal-content textarea {
+      width: 100%; height: 120px; background:#1e252e;color:var(--text);
+      border:1px solid #4a5766;border-radius:8px;padding:8px; margin-bottom: 12px;
+      resize: vertical;
+  }
+
 </style>
 </head>
 <body>
@@ -117,6 +123,7 @@
       <button data-command="circle" title="Circle (C)">Circle</button>
       <button data-command="rect" title="Rectangle (REC)">Rect</button>
       <button data-command="text" title="Text (T)">Text</button>
+      <button data-command="mtext" title="Multiline Text (MT)">Mtext</button>
       <div class="sep"></div>
        <!-- Modify Commands -->
       <button data-command="erase" title="Erase (E)">Erase</button>
@@ -164,14 +171,25 @@
       <div class="card">
         <h3>Properties</h3>
         <div id="propertiesPanel">
-            <div class="row"><label for="propType">Selection</label><input type="text" id="propType" value="No selection" readonly></div>
-            <div class="row"><label for="propColor">Color</label><input type="color" id="propColor" value="#e6e9ef" disabled></div>
-            <div class="row"><label for="propLayer">Layer</label><select id="propLayer" disabled></select></div>
-            <div class="row"><label for="propLinetype">Linetype</label><select id="propLinetype" disabled></select></div>
-            <div class="row"><label for="propLinetypeScale">Linetype scale</label><input type="number" id="propLinetypeScale" value="1.0" step="0.1" disabled></div>
-            <div class="row"><label for="propLineweight">Lineweight</label><select id="propLineweight" disabled></select></div>
-            <div class="row"><label for="propTransparency">Transparency</label><input type="number" id="propTransparency" value="0" min="0" max="90" disabled></div>
-            <div class="row"><label for="propThickness">Thickness</label><input type="number" id="propThickness" value="0.0" step="0.1" disabled></div>
+            <!-- Generic Properties -->
+            <div class="prop-group" id="propGeneric">
+                <div class="row"><label for="propType">Selection</label><input type="text" id="propType" value="No selection" readonly></div>
+                <div class="row"><label for="propColor">Color</label><input type="color" id="propColor" value="#e6e9ef"></div>
+                <div class="row"><label for="propLayer">Layer</label><select id="propLayer"></select></div>
+                <div class="row"><label for="propLinetype">Linetype</label><select id="propLinetype"></select></div>
+                <div class="row"><label for="propLinetypeScale">Linetype scale</label><input type="number" id="propLinetypeScale" value="1.0" step="0.1"></div>
+                <div class="row"><label for="propLineweight">Lineweight</label><select id="propLineweight"></select></div>
+                <div class="row"><label for="propTransparency">Transparency</label><input type="number" id="propTransparency" value="0" min="0" max="90"></div>
+                <div class="row"><label for="propThickness">Thickness</label><input type="number" id="propThickness" value="0.0" step="0.1"></div>
+            </div>
+            <!-- Text-Specific Properties -->
+            <div class="prop-group" id="propText" style="display: none;">
+                <div class="row"><label for="propTextType">Text</label><input type="text" id="propTextType" readonly></div>
+                <div class="row"><label for="propTextLayer">Layer</label><select id="propTextLayer"></select></div>
+                <div class="row"><label for="propTextContent">Contents</label><input type="text" id="propTextContent"></div>
+                <div class="row"><label for="propTextHeight">Height</label><input type="number" id="propTextHeight" value="0.0001" step="0.00001"></div>
+                <div class="row"><label for="propTextRotation">Rotation</label><input type="number" id="propTextRotation" value="0" step="1"></div>
+            </div>
         </div>
       </div>
       <div class="card">
@@ -208,7 +226,7 @@
     </div>
   </div>
 
-  <div id="vectorizeModal" class="modal-backdrop" style="display:none;">
+  <div id="vectorizeModal" class="modal-backdrop">
     <div class="modal-content">
         <h3>Image Vectorization Settings</h3>
         <div class="row">
@@ -231,7 +249,18 @@
             <button id="startVectorizeBtn">Trace Image</button>
         </div>
     </div>
-</div>
+  </div>
+
+  <div id="mtextModal" class="modal-backdrop">
+      <div class="modal-content">
+          <h3>Multiline Text</h3>
+          <textarea id="mtextInput"></textarea>
+          <div class="row" style="justify-content: flex-end; gap: 12px;">
+              <button id="cancelMtextBtn">Cancel</button>
+              <button id="saveMtextBtn">OK</button>
+          </div>
+      </div>
+  </div>
 
 <script>
 (() => {
@@ -275,8 +304,16 @@
     commandHistory: [],
     lastCommand: null,
     snapPoint: null,
-    activeGrip: null, // { entId: number, ptIndex: number, originalEnt: object }
-    selectionBox: null, // { start: {x,y}, end: {x,y}, type: 'window'|'crossing' }
+    activeGrip: null,
+    selectionBox: null,
+    currentProperties: {
+        color: 'ByLayer',
+        linetype: 'ByLayer',
+        lineweight: 'ByLayer',
+        linetypeScale: 1.0,
+        transparency: 0,
+        thickness: 0.0,
+    },
     clipboard: { data: [], basePoint: null },
   };
   let nextId = 1;
@@ -335,7 +372,6 @@
         attribution: '&copy; Google Maps'
     });
     
-    // UPDATED: Using Google Maps street layer
     mapTileLayerStreet = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
         maxZoom: 21,
         subdomains:['mt0','mt1','mt2','mt3'],
@@ -413,7 +449,7 @@
           ent.c = transformFunc(ent.c);
       } else if (ent.type === 'polyline') {
           ent.pts = ent.pts.map(transformFunc);
-      } else if (ent.type === 'text') {
+      } else if (ent.type === 'text' || ent.type === 'mtext') {
           ent.insertionPoint = transformFunc(ent.insertionPoint);
       }
   }
@@ -451,6 +487,10 @@
         return { x, y };
     }
 
+    function pointsAreEqual(p1, p2, tolerance = 1e-9) {
+      return Math.abs(p1.x - p2.x) < tolerance && Math.abs(p1.y - p2.y) < tolerance;
+    }
+
   // =======================================================
   // SECTION: CORE COMMAND ENGINE
   // =======================================================
@@ -461,6 +501,7 @@
     'rect': { alias: 'rec', execute: startRectCommand, prompt: "Specify first corner:" },
     'polyline': { alias: 'pl', execute: startPolylineCommand, prompt: "Specify start point:" },
     'text': { alias: 't', execute: startTextCommand, prompt: "Specify insertion point:" },
+    'mtext': { alias: 'mt', execute: startMtextCommand, prompt: "Specify first corner of text box:" },
     'erase': { alias: 'e', execute: startEraseCommand, prompt: "Select objects:" },
     'offset': { alias: 'o', execute: startOffsetCommand, prompt: "Specify offset distance:" },
     'move': { alias: 'm', execute: startMoveCommand, prompt: "Specify base point:" },
@@ -477,7 +518,7 @@
     'extend': { alias: 'ex', execute: startExtendCommand, prompt: "Select boundary edges... Then press Enter." },
     'fillet': { alias: 'f', execute: startFilletCommand, prompt: "Specify fillet radius:" },
     'chamfer': { alias: 'cha', execute: startChamferCommand, prompt: "Specify first chamfer distance:" },
-    'join': { alias: 'j', execute: startJoinCommand, prompt: "Select source object:" },
+    'join': { alias: 'j', execute: startJoinCommand, prompt: "Select objects to join:" },
     'explode': { alias: 'x', execute: startExplodeCommand, prompt: "Select objects to explode:" },
     'matchprop': { alias: 'ma', execute: startMatchpropCommand, prompt: "Select source object:" },
     'break': { alias: 'br', execute: startBreakCommand, prompt: "Select object to break:" },
@@ -513,27 +554,110 @@
   // =======================================================
    function startTextCommand() {
     const cmd = state.activeCommand;
+    cmd.data.height = 0.0001; // Default world height
+    cmd.data.rotation = 0;   // Default rotation
+
     cmd.execute = () => {
-        switch (cmd.step) {
-            case 0:
+        switch(cmd.step) {
+            case 0: // Get insertion point
                 const pt = getPointInput();
-                if (pt) {
-                    const textString = prompt("Enter text:", "");
-                    if (textString) {
-                        pushEnt({
-                            type: 'text',
-                            insertionPoint: pt,
-                            textString: textString,
-                            height: 14,
-                            layer: state.currentLayer,
-                            props: curProps()
-                        });
-                    }
-                    completeCommand();
+                if(pt) {
+                    cmd.data.insertionPoint = pt;
+                    setPrompt(`Specify height <${cmd.data.height}>:`);
+                    cmd.step = 1;
                 }
                 break;
+            case 1: // Get height by clicking
+                const heightPt = getPointInput();
+                if (heightPt) {
+                    const dist = Math.hypot(heightPt.x - cmd.data.insertionPoint.x, heightPt.y - cmd.data.insertionPoint.y);
+                    cmd.data.height = dist;
+                    logToHistory(`Height: ${cmd.data.height.toFixed(5)}`);
+                    setPrompt(`Specify rotation angle <${cmd.data.rotation}>:`);
+                    cmd.step = 2;
+                }
+                break;
+            case 2: // Get rotation by clicking
+                const rotPt = getPointInput();
+                if (rotPt) {
+                    cmd.data.rotation = getBearing(cmd.data.insertionPoint, rotPt);
+                    logToHistory(`Rotation: ${cmd.data.rotation.toFixed(2)}`);
+                    cmd.step = 3;
+                    cmd.execute();
+                }
+                break;
+            case 3: // Get content
+                 const textString = prompt("Enter text:", "");
+                 if (textString) {
+                     pushEnt({
+                         type: 'text',
+                         insertionPoint: cmd.data.insertionPoint,
+                         textString: textString,
+                         height: cmd.data.height,
+                         rotation: cmd.data.rotation,
+                         layer: state.currentLayer,
+                         props: curProps()
+                     });
+                 }
+                 completeCommand();
+                 break;
         }
     };
+    cmd.processInput = (input) => {
+        if (input.trim() === '') { // User pressed enter to accept default
+            if (cmd.step === 1) { // Accept default height
+                 setPrompt(`Specify rotation angle <${cmd.data.rotation}>:`);
+                 cmd.step = 2;
+            } else if (cmd.step === 2) { // Accept default rotation
+                cmd.step = 3;
+                cmd.execute();
+            }
+            return;
+        }
+        
+        const num = parseFloat(input);
+        if(isNaN(num)) { logToHistory("Invalid input."); return; }
+
+        if(cmd.step === 1) { // Processing height from command line
+            cmd.data.height = num;
+            logToHistory(`Height: ${num}`);
+            setPrompt(`Specify rotation angle <${cmd.data.rotation}>:`);
+            cmd.step = 2;
+            cmdInput.value = '';
+        } else if (cmd.step === 2) { // Processing rotation from command line
+            cmd.data.rotation = num;
+            logToHistory(`Rotation: ${num}`);
+            cmd.step = 3;
+            cmd.execute();
+        }
+    };
+   }
+
+  function startMtextCommand() {
+      const cmd = state.activeCommand;
+      cmd.execute = () => {
+          switch (cmd.step) {
+              case 0:
+                  const p1 = getPointInput();
+                  if (p1) {
+                      cmd.data.p1 = p1;
+                      setPrompt("Specify other corner of text box:");
+                      cmd.step++;
+                  }
+                  break;
+              case 1:
+                  const p2 = getPointInput();
+                  if (p2) {
+                      cmd.data.p2 = p2;
+                      const mtextModal = document.getElementById('mtextModal');
+                      const mtextInput = document.getElementById('mtextInput');
+                      mtextInput.value = '';
+                      mtextModal.style.display = 'flex';
+                      mtextInput.focus();
+                  }
+                  break;
+          }
+      };
   }
 
   async function fetchAndPlaceAddress(point) {
@@ -551,7 +675,8 @@
                 type: 'text',
                 insertionPoint: point,
                 textString: address,
-                height: 14, // Text height in pixels
+                height: 0.0001, // Default world height
+                rotation: 0,
                 layer: state.currentLayer,
                 props: curProps()
             });
@@ -673,13 +798,15 @@
               const centerX_screen = rect.x + (bbox.x0 + bbox.x1) / 2;
               const centerY_screen = rect.y + (bbox.y0 + bbox.y1) / 2;
               const insertionPoint_world = screenToWorld({ x: centerX_screen, y: centerY_screen });
-              const bboxHeight_screen = bbox.y1 - bbox.y0;
+              const bottomOfText_world = screenToWorld({x: centerX_screen, y: centerY_screen + bbox.y1 - bbox.y0});
+              const worldHeight = Math.abs(bottomOfText_world.y - insertionPoint_world.y);
 
               pushEnt({
                   type: 'text',
                   textString: line.text.trim(),
                   insertionPoint: insertionPoint_world,
-                  height: bboxHeight_screen,
+                  height: worldHeight,
+                  rotation: 0,
                   layer: state.currentLayer,
                   props: curProps()
               });
@@ -729,7 +856,6 @@
                 if (p2) {
                     cmd.data.p2_screen = worldToScreen(p2);
                     document.getElementById('vectorizeModal').style.display = 'flex';
-                    // Execution pauses here until modal is actioned
                 }
                 break;
         }
@@ -1392,6 +1518,9 @@
                           if (ent.type === 'circle' && cmd.data.type === 'scale') {
                               ent.r *= scaleFactor;
                           }
+                          if ( (ent.type === 'text' || ent.type === 'mtext') && cmd.data.type === 'rotate') {
+                             ent.rotation = (ent.rotation || 0) + (angleRad * 180 / Math.PI);
+                          }
                       }
 
                       snapshot();
@@ -1545,54 +1674,108 @@
             if (input.trim() === '') completeCommand();
         }
     }
-
+    
     function startJoinCommand() {
-        const cmd = state.activeCommand;
-        cmd.execute = () => {
-            if (cmd.step === 0) {
-                const source = hitTest(getPointInput(true));
-                if (source && (source.type === 'line' || source.type === 'polyline')) {
-                    cmd.data.source = source;
-                    cmd.data.isPoly = source.type === 'polyline';
-                    cmd.data.pts = cmd.data.isPoly ? [...source.pts] : [source.a, source.b];
-                    setPrompt("Select object to join:");
-                    cmd.step = 1;
-                }
-            } else if (cmd.step === 1) {
-                const toJoin = hitTest(getPointInput(true));
-                if (toJoin && toJoin.type === 'line') {
-                    const sourcePts = cmd.data.pts;
-                    const joinPts = [toJoin.a, toJoin.b];
-                    const startPt = sourcePts[0];
-                    const endPt = sourcePts[sourcePts.length - 1];
-                    let joined = false;
+      if (state.selection.length > 0) {
+          performJoin(state.selection);
+          completeCommand();
+      } else {
+          const cmd = state.activeCommand;
+          cmd.step = 1;
+          setPrompt("Select objects to join:");
+          
+          cmd.processSubCommand = (input) => {
+              if (input.trim() === '' && state.selection.length > 0) {
+                  performJoin(state.selection);
+                  completeCommand();
+              } else {
+                  logToHistory("No objects selected.");
+                  cancelCommand();
+              }
+          };
+      }
+    }
 
-                    if (JSON.stringify(endPt) === JSON.stringify(joinPts[0])) {
-                        sourcePts.push(joinPts[1]);
-                        joined = true;
-                    } else if (JSON.stringify(endPt) === JSON.stringify(joinPts[1])) {
-                        sourcePts.push(joinPts[0]);
-                        joined = true;
-                    } else if (JSON.stringify(startPt) === JSON.stringify(joinPts[0])) {
-                        sourcePts.unshift(joinPts[1]);
-                        joined = true;
-                    } else if (JSON.stringify(startPt) === JSON.stringify(joinPts[1])) {
-                        sourcePts.unshift(joinPts[0]);
-                        joined = true;
-                    }
+    function performJoin(selectionIds) {
+      const selectedEnts = selectionIds.map(id => state.ents.find(e => e.id === id)).filter(Boolean);
+      const segments = [];
+      const originalEntIds = [];
 
-                    if (joined) {
-                        state.ents = state.ents.filter(e => e.id !== cmd.data.source.id && e.id !== toJoin.id);
-                        pushEnt({ type: 'polyline', pts: sourcePts, closed: false, layer: cmd.data.source.layer, props: { ...cmd.data.source.props } });
-                        logToHistory("Objects joined.");
-                        completeCommand();
-                    } else {
-                        logToHistory("Lines are not connected. Cannot join.");
-                        cancelCommand();
-                    }
-                }
-            }
-        };
+      selectedEnts.forEach(ent => {
+          if (ent.type === 'line') {
+              segments.push([ent.a, ent.b]);
+              originalEntIds.push(ent.id);
+          } else if (ent.type === 'polyline') {
+              for (let i = 0; i < ent.pts.length - 1; i++) {
+                  segments.push([ent.pts[i], ent.pts[i+1]]);
+              }
+              originalEntIds.push(ent.id);
+          }
+      });
+
+      if (segments.length < 2) {
+          logToHistory("Need at least two joinable objects.");
+          return;
+      }
+
+      const chains = [];
+      while (segments.length > 0) {
+          let currentChain = segments.shift();
+
+          let foundMatch = true;
+          while (foundMatch) {
+              foundMatch = false;
+              for (let i = segments.length - 1; i >= 0; i--) {
+                  const segment = segments[i];
+                  const chainStart = currentChain[0];
+                  const chainEnd = currentChain[currentChain.length - 1];
+
+                  if (pointsAreEqual(chainEnd, segment[0])) {
+                      currentChain.push(segment[1]);
+                      segments.splice(i, 1);
+                      foundMatch = true;
+                  } else if (pointsAreEqual(chainEnd, segment[1])) {
+                      currentChain.push(segment[0]);
+                      segments.splice(i, 1);
+                      foundMatch = true;
+                  } else if (pointsAreEqual(chainStart, segment[1])) {
+                      currentChain.unshift(segment[0]);
+                      segments.splice(i, 1);
+                      foundMatch = true;
+                  } else if (pointsAreEqual(chainStart, segment[0])) {
+                      currentChain.unshift(segment[1]);
+                      segments.splice(i, 1);
+                      foundMatch = true;
+                  }
+              }
+          }
+          chains.push(currentChain);
+      }
+
+      state.ents = state.ents.filter(e => !originalEntIds.includes(e.id));
+
+      let joinCount = 0;
+      chains.forEach(chain => {
+          const firstEnt = selectedEnts[0];
+          if (chain.length > 0) { // Should always be true
+              const isClosed = pointsAreEqual(chain[0], chain[chain.length - 1]);
+              
+              pushEnt({ 
+                  type: 'polyline', 
+                  pts: chain, 
+                  closed: isClosed, 
+                  layer: firstEnt.layer, 
+                  props: firstEnt.props 
+              });
+              
+              if (chains.length < originalEntIds.length) joinCount++;
+          }
+      });
+      
+      logToHistory(joinCount > 0 ? `${originalEntIds.length} objects joined into ${chains.length} polyline(s).` : "No objects could be joined.");
+      snapshot();
+      clearSelection();
+      draw();
     }
 
     function startBreakCommand() {
@@ -1775,26 +1958,80 @@
     layersDiv.addEventListener('input', onLayerChange);
 
     propertiesPanel.addEventListener('input', (e) => {
-        if (e.target.id.startsWith('prop')) {
-            const prop = e.target.id.replace('prop', '').toLowerCase();
-            updateSelectedEnts(prop, e.target.value);
+        const targetId = e.target.id;
+        if (!targetId.startsWith('prop')) return;
+        
+        if (state.selection.length === 1) {
+            const ent = state.ents.find(e => e.id === state.selection[0]);
+            if (ent && (ent.type === 'text' || ent.type === 'mtext')) {
+                updateSelectedText(targetId, e.target.value);
+                return;
+            }
+        }
+        
+        const prop = targetId.replace('prop', '').toLowerCase();
+        const value = e.target.value;
+
+        if (state.selection.length > 0) {
+            updateSelectedEnts(prop, value);
+        } else {
+            const isNumeric = ['linetypescale', 'transparency', 'thickness'].includes(prop);
+            
+            if (prop === 'layer') {
+                state.currentLayer = value;
+            } else {
+                state.currentProperties[prop] = isNumeric ? parseFloat(value) : value;
+            }
+            updatePropertiesPanel();
         }
     });
       
     // --- Modal Event Handlers ---
-    const modal = document.getElementById('vectorizeModal');
     document.getElementById('startVectorizeBtn').onclick = () => {
-        modal.style.display = 'none';
+        document.getElementById('vectorizeModal').style.display = 'none';
         performMapVectorization();
     };
     document.getElementById('cancelVectorizeBtn').onclick = () => {
-        modal.style.display = 'none';
+        document.getElementById('vectorizeModal').style.display = 'none';
         logToHistory("Map to CAD cancelled.");
         cancelCommand();
     };
     document.getElementById('cannyThreshold1').oninput = e => { document.getElementById('cannyThreshold1Value').textContent = e.target.value; };
     document.getElementById('cannyThreshold2').oninput = e => { document.getElementById('cannyThreshold2Value').textContent = e.target.value; };
     document.getElementById('epsilon').oninput = e => { document.getElementById('epsilonValue').textContent = e.target.value; };
+
+    // Mtext Modal Handlers
+    document.getElementById('saveMtextBtn').onclick = () => {
+        const modal = document.getElementById('mtextModal');
+        const text = document.getElementById('mtextInput').value;
+        modal.style.display = 'none';
+
+        if(state.activeCommand && state.activeCommand.name === 'mtext') {
+            const { p1, p2 } = state.activeCommand.data;
+            pushEnt({
+                type: 'mtext',
+                insertionPoint: p1,
+                width: L.latLng(p1.y, p1.x).distanceTo(L.latLng(p1.y, p2.x)), // width in meters
+                height: 0.0001, // Default world height
+                rotation: 0,
+                textString: text,
+                layer: state.currentLayer,
+                props: curProps()
+            });
+            completeCommand();
+        } else if (state.editingEnt) { // Handle editing
+            state.editingEnt.textString = text;
+            state.editingEnt = null;
+            snapshot();
+            draw();
+        }
+    };
+    document.getElementById('cancelMtextBtn').onclick = () => {
+        document.getElementById('mtextModal').style.display = 'none';
+        if(state.activeCommand && state.activeCommand.name === 'mtext') cancelCommand();
+        state.editingEnt = null;
+    };
+
   }
 
   async function searchLocation() {
@@ -1831,21 +2068,18 @@
   }
 
   function onDblClick(e) {
-    if (state.activeCommand) return; // Don't edit while in a command
-
+    if (state.activeCommand) return;
     const worldPt = screenToWorld({x: state.mouse.x, y: state.mouse.y});
     const hit = hitTest(worldPt);
 
-    if (hit && hit.type === 'text') {
-        const newText = prompt("Edit text:", hit.textString);
-        if (newText !== null && newText !== hit.textString) {
-            const entToEdit = state.ents.find(ent => ent.id === hit.id);
-            if (entToEdit) {
-                entToEdit.textString = newText;
-                snapshot();
-                draw();
-                logToHistory("Text edited.");
-            }
+    if (hit && (hit.type === 'text' || hit.type === 'mtext')) {
+        clearSelection();
+        toggleSelect(hit.id, true);
+        if (hit.type === 'mtext') {
+            state.editingEnt = state.ents.find(ent => ent.id === hit.id);
+            const modal = document.getElementById('mtextModal');
+            document.getElementById('mtextInput').value = state.editingEnt.textString;
+            modal.style.display = 'flex';
         }
     }
   }
@@ -1860,7 +2094,12 @@
       state.mouse.lastClickTime = clickTime;
       if (isDoubleClick) return;
 
-      if (e.button === 1) { state.mouse.isPanning = true; leafletMap.dragging.disable(); canvas.style.cursor = 'grabbing'; return; }
+      if (e.button === 1) { 
+        state.mouse.isPanning = true; 
+        leafletMap.dragging.disable(); 
+        canvas.style.cursor = 'none';
+        return; 
+      }
       if (e.button === 0) {
           if (state.activeGrip) { finalizeGripEdit(); return; }
 
@@ -1934,7 +2173,7 @@
     state.mouse.isDown = false;
     state.mouse.isPanning = false;
     leafletMap.dragging.enable();
-    canvas.style.cursor = 'default';
+    canvas.style.cursor = 'none';
   }
 
   function onMouseMove(e) {
@@ -2063,7 +2302,6 @@
     const lwValue = props.lineweight === 'Default' ? 1 : parseFloat(props.lineweight);
     ctx.lineWidth = selected && !state.activeCommand ? lwValue + 1 : lwValue;
     
-    // Convert hex color and apply transparency
     const hex = props.color.startsWith('#') ? props.color : '#FFFFFF';
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
@@ -2098,18 +2336,52 @@
         const p1 = worldToScreen(e.pts[0]); ctx.moveTo(p1.x, p1.y);
         for(let i=1; i<e.pts.length; i++) { const p2 = worldToScreen(e.pts[i]); ctx.lineTo(p2.x, p2.y); }
         ctx.stroke();
-    } else if (e.type === 'text') {
-        ctx.setLineDash([]); // Text should not be dashed
-        const p = worldToScreen(e.insertionPoint);
-        const finalColor = selected && !state.activeCommand ? '#ff8800' : props.color;
-        ctx.font = `bold ${e.height || 12}px sans-serif`;
-        ctx.textAlign = e.align || 'left';
-        ctx.textBaseline = e.baseline || 'bottom';
-        const textMetrics = ctx.measureText(e.textString);
-        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-        ctx.fillRect(p.x - 2, p.y - (e.height || 12) - 2, textMetrics.width + 4, (e.height || 12) + 4);
+    } else if (e.type === 'text' || e.type === 'mtext') {
+        ctx.setLineDash([]);
+        const p_s = worldToScreen(e.insertionPoint);
         ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
-        ctx.fillText(e.textString, p.x, p.y);
+
+        const p_top_world = { x: e.insertionPoint.x, y: e.insertionPoint.y + e.height };
+        const p_top_screen = worldToScreen(p_top_world);
+        const screenPixelHeight = distScreen(p_s, p_top_screen);
+        
+        ctx.font = `bold ${screenPixelHeight}px sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+
+        ctx.save();
+        ctx.translate(p_s.x, p_s.y);
+        ctx.rotate((e.rotation || 0) * Math.PI / 180);
+        
+        if (e.type === 'mtext') {
+            const p2 = getDestinationPoint(e.insertionPoint, e.width, 90);
+            const p2_s = worldToScreen(p2);
+            const width_s = distScreen(p_s, p2_s);
+            
+            const lines = e.textString.split('\n');
+            let currentY = 0;
+            lines.forEach(line => {
+                let words = line.split(' ');
+                let currentLine = '';
+                for(let n = 0; n < words.length; n++) {
+                    let testLine = currentLine + words[n] + ' ';
+                    let metrics = ctx.measureText(testLine);
+                    if (metrics.width > width_s && n > 0) {
+                        ctx.fillText(currentLine, 0, currentY);
+                        currentLine = words[n] + ' ';
+                        currentY += screenPixelHeight * 1.2;
+                    } else {
+                        currentLine = testLine;
+                    }
+                }
+                ctx.fillText(currentLine, 0, currentY);
+                currentY += screenPixelHeight * 1.2;
+            });
+        } else {
+            ctx.fillText(e.textString, 0, 0);
+        }
+        
+        ctx.restore();
     }
   }
 
@@ -2140,8 +2412,14 @@
 
   function drawSelectionGrips() {
       if (state.selection.length === 0 || state.activeCommand) return;
+      
+      ctx.globalAlpha = 1.0; 
+
       ctx.setLineDash([]);
-      const gripSize = 16;
+      const gripSize = 20;
+
+      ctx.strokeStyle = '#00FF00';
+      ctx.lineWidth = 1;
 
       for (const id of state.selection) {
           const ent = state.ents.find(e => e.id === id);
@@ -2158,7 +2436,12 @@
               } else {
                   ctx.fillStyle = 'var(--accent)';
               }
-              ctx.fillRect(ptS.x - gripSize / 2, ptS.y - gripSize / 2, gripSize, gripSize);
+              
+              const gripX = Math.floor(ptS.x - gripSize / 2);
+              const gripY = Math.floor(ptS.y - gripSize / 2);
+
+              ctx.fillRect(gripX, gripY, gripSize, gripSize);
+              ctx.strokeRect(gripX, gripY, gripSize, gripSize);
           }
       }
   }
@@ -2192,9 +2475,12 @@
       ctx.strokeStyle = '#999';
       ctx.setLineDash([5, 5]);
 
-      if (name === 'rect' && data.start) {
-          const p1 = worldToScreen(data.start); const p2 = worldToScreen(currentPt);
-          ctx.beginPath(); ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y); ctx.stroke();
+      if ((name === 'rect' || name === 'mtext') && data.p1) {
+          const p1_s = worldToScreen(data.p1);
+          const p2_s = worldToScreen(currentPt);
+          ctx.beginPath();
+          ctx.rect(p1_s.x, p1_s.y, p2_s.x - p1_s.x, p2_s.y - p1_s.y);
+          ctx.stroke();
       } else if (name === 'imagetext' && data.p1_screen) {
           const p1 = data.p1_screen;
           const p2 = worldToScreen(currentPt);
@@ -2274,7 +2560,7 @@
 
   function drawSnapMarker() {
       if(!state.snapPoint) return;
-      const markerSize = 16;
+      const markerSize = 20;
       const ptS = worldToScreen(state.snapPoint);
       ctx.strokeStyle = 'var(--osnap-marker)'; ctx.lineWidth = 2;
       ctx.beginPath();
@@ -2288,30 +2574,51 @@
   function drawCrosshairCursor() {
     if (state.mouse.isPanning) return;
 
+    // Get the current mouse coordinates
     const { x, y } = state.mouse;
-    const { width, height } = canvas;
 
-    // CHANGE THIS LINE FOR CURSOR COLOR
-    ctx.strokeStyle = '#0000FF'; // Changed from white to blue
+    // --- CUSTOMIZE CURSOR APPEARANCE HERE ---
+    const color = '#0000FF'; // Cursor color (default is a light grey/white)
+    const pickboxSize = 15;      // The size of the small central square
+    const crosshairLength = 105; // The length of each of the 4 lines
+    const gap = 3;              // The empty space between the box and the lines
 
-    ctx.lineWidth = 1;
+    // Set the drawing style
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1; // Keep lines thin for precision
     ctx.setLineDash([]);
 
-    // Horizontal line
-    ctx.beginPath();
-    ctx.moveTo(0, y + 0.5);
-    ctx.lineTo(width, y + 0.5);
-    ctx.stroke();
+    // --- Draw the AutoCAD-style cursor ---
 
-    // Vertical line
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, 0);
-    ctx.lineTo(x + 0.5, height);
-    ctx.stroke();
+    // 1. Draw the central Pickbox (a hollow square)
+    // We use Math.floor and add 0.5 to get perfectly sharp 1-pixel lines.
+    ctx.strokeRect(
+        Math.floor(x - pickboxSize / 2) + 0.5, 
+        Math.floor(y - pickboxSize / 2) + 0.5, 
+        pickboxSize, 
+        pickboxSize
+    );
 
-    // Pickbox
-    const pickboxSize = 15;
-    ctx.strokeRect(x - pickboxSize / 2 + 0.5, y - pickboxSize / 2 + 0.5, pickboxSize, pickboxSize);
+    // 2. Draw the four crosshair lines around the pickbox
+    ctx.beginPath();
+    
+    // Line to the right
+    ctx.moveTo(Math.floor(x + pickboxSize / 2 + gap), Math.floor(y) + 0.5);
+    ctx.lineTo(Math.floor(x + pickboxSize / 2 + gap + crosshairLength), Math.floor(y) + 0.5);
+
+    // Line to the left
+    ctx.moveTo(Math.floor(x - pickboxSize / 2 - gap), Math.floor(y) + 0.5);
+    ctx.lineTo(Math.floor(x - pickboxSize / 2 - gap - crosshairLength), Math.floor(y) + 0.5);
+
+    // Line going down
+    ctx.moveTo(Math.floor(x) + 0.5, Math.floor(y + pickboxSize / 2 + gap));
+    ctx.lineTo(Math.floor(x) + 0.5, Math.floor(y + pickboxSize / 2 + gap + crosshairLength));
+    
+    // Line going up
+    ctx.moveTo(Math.floor(x) + 0.5, Math.floor(y - pickboxSize / 2 - gap));
+    ctx.lineTo(Math.floor(x) + 0.5, Math.floor(y - pickboxSize / 2 - gap - crosshairLength));
+
+    ctx.stroke();
   }
 
   function evaluateSnaps() {
@@ -2353,13 +2660,17 @@
           for (let i = 0; i < e.pts.length - 1; i++) {
               const aS=worldToScreen(e.pts[i]), bS=worldToScreen(e.pts[i+1]); const l2=(bS.x-aS.x)**2+(bS.y-aS.y)**2; if(l2===0) continue; let t=((pS.x-aS.x)*(bS.x-aS.x)+(pS.y-aS.y)*(bS.y-aS.y))/l2; t=clamp(t,0,1); const current_d = distScreen(pS, {x:aS.x+t*(bS.x-aS.x), y:aS.y+t*(bS.y-aS.y)}); d = Math.min(d, current_d);
           }
-      } else if (e.type === 'text') {
+      } else if (e.type === 'text' || e.type === 'mtext') {
           const ptS = worldToScreen(e.insertionPoint);
-          ctx.font = `bold ${e.height || 12}px sans-serif`;
-          const textMetrics = ctx.measureText(e.textString);
-          const textRect = { x: ptS.x, y: ptS.y - (e.height || 12), width: textMetrics.width, height: (e.height || 12) };
+          const p_top_world = { x: e.insertionPoint.x, y: e.insertionPoint.y + e.height };
+          const p_top_screen = worldToScreen(p_top_world);
+          const screenPixelHeight = distScreen(ptS, p_top_screen);
+          
+          ctx.font = `bold ${screenPixelHeight}px sans-serif`;
+          const textMetrics = ctx.measureText(e.textString.split('\n')[0]);
+          const textRect = { x: ptS.x, y: ptS.y - screenPixelHeight, width: textMetrics.width, height: screenPixelHeight };
           if(pS.x >= textRect.x && pS.x <= textRect.x + textRect.width && pS.y >= textRect.y && pS.y <= textRect.y + textRect.height) {
-              d = 0; // Direct hit
+              d = 0;
           }
       }
       if(d<bd){ bd=d; best=e; }
@@ -2414,7 +2725,7 @@
           const ent_r = { x: cS.x - rS, y: cS.y - rS, w: 2 * rS, h: 2 * rS };
           if (isCrossing) { return !(r.x > ent_r.x + ent_r.w || r.x + r.w < ent_r.x || r.y > ent_r.y + ent_r.h || r.y + r.h < ent_r.y); }
           else { return ent_r.x >= r.x && ent_r.x + ent_r.w <= r.x + r.w && ent_r.y >= r.y && ent_r.y + ent_r.h <= r.y + r.h; }
-      } else if (ent.type === 'text') {
+      } else if (ent.type === 'text' || ent.type === 'mtext') {
           const pS = worldToScreen(ent.insertionPoint);
           if (isCrossing) { return isPointInRect(pS, r); }
           else { return isPointInRect(pS, r); }
@@ -2476,6 +2787,10 @@
       if (ent.type === 'line') return [ent.a, ent.b];
       if (ent.type === 'polyline') return ent.pts;
       if (ent.type === 'text') return [ent.insertionPoint];
+      if (ent.type === 'mtext') {
+          const p2 = getDestinationPoint(ent.insertionPoint, ent.width, 90);
+          return [ent.insertionPoint, p2];
+      }
       if (ent.type === 'circle') {
           const quads = [
               getDestinationPoint(ent.c, ent.r, 0),
@@ -2552,6 +2867,16 @@
           }
       } else if (ent.type === 'text') {
           if (ptIndex === 0) ent.insertionPoint = newPt;
+      } else if (ent.type === 'mtext') {
+          const p1 = ent.insertionPoint;
+          const p2 = getDestinationPoint(p1, ent.width, 90);
+          if(ptIndex === 0) { // Moving insertion point
+              ent.insertionPoint = newPt;
+              ent.width = L.latLng(newPt.y, newPt.x).distanceTo(L.latLng(p2.y, p2.x));
+          } else { // Adjusting width
+              ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
+          }
+
       } else if (ent.type === 'circle') {
           if (ptIndex === 0) {
               ent.c = newPt;
@@ -2700,55 +3025,88 @@
   function hideTooltip() { tooltip.style.display = 'none'; }
 
   function updatePropertiesPanel() {
-      const propInputs = {
-          type: document.getElementById('propType'),
-          color: document.getElementById('propColor'),
-          layer: document.getElementById('propLayer'),
-          linetype: document.getElementById('propLinetype'),
-          linetypeScale: document.getElementById('propLinetypeScale'),
-          lineweight: document.getElementById('propLineweight'),
-          transparency: document.getElementById('propTransparency'),
-          thickness: document.getElementById('propThickness'),
-      };
-
-      propInputs.layer.innerHTML = '';
-      state.layers.forEach(l => {
-          const opt = document.createElement('option');
-          opt.value = l.name;
-          opt.textContent = l.name;
-          propInputs.layer.appendChild(opt);
+      const genericProps = document.getElementById('propGeneric');
+      const textProps = document.getElementById('propText');
+      const propType = document.getElementById('propType');
+      
+      const layerSelects = [document.getElementById('propLayer'), document.getElementById('propTextLayer')];
+      layerSelects.forEach(select => {
+          select.innerHTML = '';
+          state.layers.forEach(l => {
+              const opt = document.createElement('option');
+              opt.value = l.name;
+              opt.textContent = l.name;
+              select.appendChild(opt);
+          });
+          select.value = state.currentLayer;
       });
 
+      const showGeneric = () => { genericProps.style.display = 'block'; textProps.style.display = 'none'; };
+      const showText = () => { genericProps.style.display = 'none'; textProps.style.display = 'block'; };
+      
+      if (state.selection.length === 1) {
+          const ent = state.ents.find(e => e.id === state.selection[0]);
+          if (ent && (ent.type === 'text' || ent.type === 'mtext')) {
+              showText();
+              document.getElementById('propTextType').value = ent.type.toUpperCase();
+              document.getElementById('propTextContent').value = ent.textString;
+              document.getElementById('propTextHeight').value = ent.height;
+              document.getElementById('propTextRotation').value = ent.rotation || 0;
+              document.getElementById('propTextLayer').value = ent.layer;
+              document.getElementById('propTextContent').disabled = (ent.type === 'mtext');
+              return;
+          }
+      }
+      
+      showGeneric();
+      propType.value = state.selection.length === 0 ? 'No selection' : `Multiple (${state.selection.length})`;
+
       if (state.selection.length === 0) {
-          propInputs.type.value = 'No selection';
-          propInputs.layer.value = state.currentLayer;
-          const currentLayerObj = state.layers.find(l => l.name === state.currentLayer);
-          propInputs.color.value = currentLayerObj ? currentLayerObj.color : '#e6e9ef';
-          propInputs.linetype.value = 'ByLayer';
-          propInputs.lineweight.value = 'ByLayer';
-          propInputs.linetypeScale.value = 1.0;
-          propInputs.transparency.value = 0;
-          propInputs.thickness.value = 0.0;
-          Object.values(propInputs).forEach(input => { if(input.id !== 'propType') input.disabled = true; });
+          document.getElementById('propColor').value = state.currentProperties.color;
+          document.getElementById('propLinetype').value = state.currentProperties.linetype;
+          document.getElementById('propLinetypeScale').value = state.currentProperties.linetypeScale;
+          document.getElementById('propLineweight').value = state.currentProperties.lineweight;
+          document.getElementById('propTransparency').value = state.currentProperties.transparency;
+          document.getElementById('propThickness').value = state.currentProperties.thickness;
       } else {
-          const selectedEnts = state.selection.map(id => state.ents.find(e => e.id === id)).filter(Boolean);
-          const firstEnt = selectedEnts[0];
-          propInputs.type.value = state.selection.length > 1 ? `Multiple (${state.selection.length})` : firstEnt.type;
-
-          const checkSameValue = (prop) => selectedEnts.every(e => (e.props && e.props[prop]) === (firstEnt.props && firstEnt.props[prop]));
-          const checkSameLayer = selectedEnts.every(e => e.layer === firstEnt.layer);
-
-          propInputs.layer.value = checkSameLayer ? firstEnt.layer : '';
-          propInputs.color.value = checkSameValue('color') && firstEnt.props.color ? firstEnt.props.color : '#ffffff';
-          propInputs.linetype.value = checkSameValue('linetype') && firstEnt.props.linetype ? firstEnt.props.linetype : 'ByLayer';
-          propInputs.lineweight.value = checkSameValue('lineweight') && firstEnt.props.lineweight ? firstEnt.props.lineweight : 'ByLayer';
-          propInputs.linetypeScale.value = checkSameValue('linetypeScale') && firstEnt.props.linetypeScale ? firstEnt.props.linetypeScale : 1.0;
-          propInputs.transparency.value = checkSameValue('transparency') && firstEnt.props.transparency ? firstEnt.props.transparency : 0;
-          propInputs.thickness.value = checkSameValue('thickness') && firstEnt.props.thickness ? firstEnt.props.thickness : 0;
-
-          Object.values(propInputs).forEach(input => { if(input.id !== 'propType') input.disabled = false; });
+          // Simplified for multiple selection
+          const firstEnt = state.ents.find(e => e.id === state.selection[0]);
+          if (firstEnt) {
+              document.getElementById('propLayer').value = firstEnt.layer;
+              document.getElementById('propColor').value = firstEnt.props.color || '#ffffff';
+          }
       }
   }
+  
+  function updateSelectedText(targetId, value) {
+      if (state.selection.length !== 1) return;
+      const ent = state.ents.find(e => e.id === state.selection[0]);
+      if (!ent || (ent.type !== 'text' && ent.type !== 'mtext')) return;
+      
+      switch (targetId) {
+          case 'propTextContent':
+              ent.textString = value;
+              break;
+          case 'propTextHeight':
+              const newWorldHeight = parseFloat(value);
+              if (!isNaN(newWorldHeight) && newWorldHeight > 0) {
+                  ent.height = newWorldHeight;
+              }
+              break;
+          case 'propTextRotation':
+              const newRotation = parseFloat(value);
+              if (!isNaN(newRotation)) {
+                  ent.rotation = newRotation;
+              }
+              break;
+          case 'propTextLayer':
+               ent.layer = value;
+               break;
+      }
+      snapshot();
+      draw();
+  }
+
 
   function updateSelectedEnts(prop, value) {
       if (state.selection.length === 0) return;
@@ -2772,14 +3130,21 @@
 
   function refreshLayersUI(){
       layersDiv.innerHTML = '';
-      const propLayerSelect = document.getElementById('propLayer');
-      propLayerSelect.innerHTML = '';
-
-      state.layers.forEach(l => {
-          const row = document.createElement('div'); row.className = 'layer-row';
-          row.innerHTML = `<input type="checkbox" data-name="${l.name}" data-prop="visible" ${l.visible ? 'checked' : ''}><input type="color" data-name="${l.name}" data-prop="color" value="${l.color}"><span>${l.name}</span>`;
-          layersDiv.appendChild(row);
-          const opt = document.createElement('option'); opt.value = l.name; opt.textContent = l.name; propLayerSelect.appendChild(opt);
+      const propLayerSelects = [document.getElementById('propLayer'), document.getElementById('propTextLayer')];
+      propLayerSelects.forEach(select => {
+          select.innerHTML = '';
+          state.layers.forEach(l => {
+              const row = document.createElement('div');
+              if (select.id === 'propLayer') { // Only add to the main layer list once
+                  row.className = 'layer-row';
+                  row.innerHTML = `<input type="checkbox" data-name="${l.name}" data-prop="visible" ${l.visible ? 'checked' : ''}><input type="color" data-name="${l.name}" data-prop="color" value="${l.color}"><span>${l.name}</span>`;
+                  layersDiv.appendChild(row);
+              }
+              const opt = document.createElement('option');
+              opt.value = l.name;
+              opt.textContent = l.name;
+              select.appendChild(opt);
+          });
       });
       updatePropertiesPanel();
   }
@@ -2797,14 +3162,8 @@
       snapshot(); draw();
   }
   function curProps() {
-      return {
-        color: 'ByLayer',
-        linetype: 'ByLayer',
-        lineweight: 'ByLayer',
-        linetypeScale: 1.0,
-        transparency: 0,
-        thickness: 0
-      };
+      // Return a copy of the current properties state
+      return { ...state.currentProperties };
   }
   function snapshot(){ const s=JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer}); if (state.history[state.history.length-1] !== s) { state.history.push(s); if(state.history.length>50)state.history.shift(); state.future=[]; } }
   function loadState(s) {
@@ -2905,28 +3264,21 @@
   }
 
   function exportToDxf() {
-    logToHistory("Exporting to DXF...");
+    logToHistory("Exporting to DXF... (This version is designed for maximum compatibility with AutoCAD)");
     
-    // --- DXF Helper Class ---
     class DxfWriter {
         constructor() {
-            this.handle = 100; // Start handles from 100
+            this.handleSeed = 100;
             this.dxf = [];
-            this.layerHandles = {};
-            this.linetypeHandles = {};
+            this.handles = {
+                layer: {},
+                block_record: {},
+                block: {}
+            };
         }
-        
-        add(code, value) {
-            this.dxf.push(code, value);
-        }
-
-        getHandle() {
-            return (this.handle++).toString(16).toUpperCase();
-        }
-        
-        toString() {
-            return this.dxf.join('\n');
-        }
+        add(code, value) { this.dxf.push(String(code), String(value)); }
+        getHandle() { return (this.handleSeed++).toString(16).toUpperCase(); }
+        toString() { return this.dxf.join('\n'); }
     }
 
     const dxf = new DxfWriter();
@@ -2940,97 +3292,95 @@
         if (g > 200 && r < 100 && b < 100) return 3; // Green
         if (b > 200 && r < 100 && g < 100) return 5; // Blue
         if (r > 200 && g > 200 && b < 100) return 2; // Yellow
-        return 7; // Default to white
+        return 7;
     };
 
     // --- SECTION: Header ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'HEADER');
-    dxf.add(9, '$ACADVER'); dxf.add(1, 'AC1009'); // R12/LT2 DXF version
-    dxf.add(9, '$HANDSEED'); dxf.add(5, dxf.handle.toString(16).toUpperCase());
+    dxf.add(9, '$ACADVER'); dxf.add(1, 'AC1014');
+    dxf.add(9, '$HANDSEED'); dxf.add(5, dxf.getHandle());
     dxf.add(0, 'ENDSEC');
 
     // --- SECTION: Tables ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'TABLES');
-
-    // LTYPE Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'LTYPE');
-    const ltypeTableHandle = dxf.getHandle();
-    dxf.add(5, ltypeTableHandle);
-    dxf.add(330, '0'); // Owner handle
-    dxf.add(100, 'AcDbSymbolTable');
-    dxf.add(70, 3); // Number of linetypes
-
-    const linetypes = [
-        {name: 'ByBlock', desc: ''},
-        {name: 'ByLayer', desc: ''},
-        {name: 'Continuous', desc: 'Solid line'}
-    ];
     
-    linetypes.forEach(lt => {
-        const handle = dxf.getHandle();
-        dxf.linetypeHandles[lt.name] = handle;
-        dxf.add(0, 'LTYPE'); dxf.add(5, handle); dxf.add(330, ltypeTableHandle); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLinetypeTableRecord');
-        dxf.add(2, lt.name); dxf.add(70, 0); dxf.add(3, lt.desc); dxf.add(72, 65); dxf.add(73, 0); dxf.add(40, 0.0);
-    });
+    dxf.add(0, 'TABLE'); dxf.add(2, 'LTYPE'); dxf.add(5, '5'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
+    dxf.add(0, 'LTYPE'); dxf.add(5, '10'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLinetypeTableRecord');
+    dxf.add(2, 'Continuous'); dxf.add(70, 0); dxf.add(3, 'Solid line'); dxf.add(72, 65); dxf.add(73, 0); dxf.add(40, 0.0);
     dxf.add(0, 'ENDTAB');
 
-    // LAYER Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'LAYER');
-    const layerTableHandle = dxf.getHandle();
-    dxf.add(5, layerTableHandle);
-    dxf.add(330, '0');
-    dxf.add(100, 'AcDbSymbolTable');
-    dxf.add(70, state.layers.length);
-    
+    dxf.add(0, 'TABLE'); dxf.add(2, 'LAYER'); dxf.add(5, '2'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, state.layers.length);
     state.layers.forEach(layer => {
         const handle = dxf.getHandle();
-        dxf.layerHandles[layer.name] = handle;
-        dxf.add(0, 'LAYER'); dxf.add(5, handle); dxf.add(330, layerTableHandle); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLayerTableRecord');
+        dxf.handles.layer[layer.name] = handle;
+        dxf.add(0, 'LAYER'); dxf.add(5, handle); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLayerTableRecord');
         dxf.add(2, layer.name); dxf.add(70, 0); dxf.add(62, hexToAci(layer.color)); dxf.add(6, 'Continuous');
     });
     dxf.add(0, 'ENDTAB');
+    
+    dxf.add(0, 'TABLE'); dxf.add(2, 'STYLE'); dxf.add(5, '3'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
+    dxf.add(0, 'STYLE'); dxf.add(5, '11'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbTextStyleTableRecord');
+    dxf.add(2, 'Standard'); dxf.add(70, 0); dxf.add(40, 0); dxf.add(41, 1); dxf.add(50, 0); dxf.add(71, 0); dxf.add(42, 0.2); dxf.add(3, 'arial.ttf');
+    dxf.add(0, 'ENDTAB');
+
+    dxf.add(0, 'TABLE'); dxf.add(2, 'APPID'); dxf.add(5, '9'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
+    dxf.add(0, 'APPID'); dxf.add(5, '12'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbRegAppTableRecord');
+    dxf.add(2, 'ACAD'); dxf.add(70, 0);
+    dxf.add(0, 'ENDTAB');
+
+    dxf.add(0, 'TABLE'); dxf.add(2, 'BLOCK_RECORD'); dxf.add(5, '1'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 2);
+    dxf.handles.block_record['*Model_Space'] = dxf.getHandle();
+    dxf.add(0, 'BLOCK_RECORD'); dxf.add(5, dxf.handles.block_record['*Model_Space']); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbBlockTableRecord'); dxf.add(2, '*Model_Space');
+    dxf.handles.block_record['*Paper_Space'] = dxf.getHandle();
+    dxf.add(0, 'BLOCK_RECORD'); dxf.add(5, dxf.handles.block_record['*Paper_Space']); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbBlockTableRecord'); dxf.add(2, '*Paper_Space');
+    dxf.add(0, 'ENDTAB');
+
     dxf.add(0, 'ENDSEC');
     
     // --- SECTION: BLOCKS ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'BLOCKS');
+    const modelSpaceBlockHandle = dxf.getHandle();
+    dxf.handles.block['*Model_Space'] = modelSpaceBlockHandle;
+    dxf.add(0, 'BLOCK'); dxf.add(5, modelSpaceBlockHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
+    dxf.add(100, 'AcDbBlockBegin'); dxf.add(2, '*Model_Space'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(30, 0); dxf.add(3, '*Model_Space'); dxf.add(1, '');
+    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
+
+    const paperSpaceBlockHandle = dxf.getHandle();
+    dxf.handles.block['*Paper_Space'] = paperSpaceBlockHandle;
+    dxf.add(0, 'BLOCK'); dxf.add(5, paperSpaceBlockHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
+    dxf.add(100, 'AcDbBlockBegin'); dxf.add(2, '*Paper_Space'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(30, 0); dxf.add(3, '*Paper_Space'); dxf.add(1, '');
+    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
     dxf.add(0, 'ENDSEC');
 
     // --- SECTION: Entities ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'ENTITIES');
+    const ownerHandle = dxf.handles.block_record['*Model_Space'];
+
     state.ents.forEach(ent => {
         const layer = state.layers.find(l => l.name === ent.layer);
         if (!layer || !layer.visible) return;
 
         if (ent.type === 'line') {
-            dxf.add(0, 'LINE'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbLine');
+            dxf.add(0, 'LINE'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbLine');
             dxf.add(10, ent.a.x); dxf.add(20, ent.a.y); dxf.add(30, 0);
             dxf.add(11, ent.b.x); dxf.add(21, ent.b.y); dxf.add(31, 0);
         } else if (ent.type === 'polyline' && ent.pts.length > 1) {
-            dxf.add(0, 'LWPOLYLINE'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbPolyline');
+            dxf.add(0, 'LWPOLYLINE'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbPolyline');
             dxf.add(90, ent.pts.length);
             dxf.add(70, ent.closed ? 1 : 0);
             ent.pts.forEach(pt => { dxf.add(10, pt.x); dxf.add(20, pt.y); });
         } else if (ent.type === 'circle') {
-            const latRad = ent.c.y * Math.PI / 180;
-            const radiusInDegrees = ent.r / (111320 * Math.cos(latRad));
-            dxf.add(0, 'CIRCLE'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbCircle');
+            const radiusInDegrees = ent.r / 111320.0;
+            dxf.add(0, 'CIRCLE'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbCircle');
             dxf.add(10, ent.c.x); dxf.add(20, ent.c.y); dxf.add(30, 0);
             dxf.add(40, radiusInDegrees);
-        } else if (ent.type === 'text') {
-             // Convert pixel height to an approximate degree height for DXF
-            const p1 = ent.insertionPoint;
-            const p2_screen = worldToScreen(p1);
-            p2_screen.y -= ent.height;
-            const p2_world = screenToWorld(p2_screen);
-            const heightInDegrees = Math.abs(p1.y - p2_world.y);
-
-            dxf.add(0, 'TEXT'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbText');
+        } else if (ent.type === 'text' || ent.type === 'mtext') {
+            dxf.add(0, 'TEXT'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbText');
             dxf.add(10, ent.insertionPoint.x); dxf.add(20, ent.insertionPoint.y); dxf.add(30, 0);
-            dxf.add(40, heightInDegrees);
+            dxf.add(40, ent.height);
+            if (ent.rotation) dxf.add(50, ent.rotation);
             dxf.add(1, ent.textString);
-            dxf.add(100, 'AcDbText'); 
-            dxf.add(72, 1); // Center align text to better match OCR bounding box center
-            dxf.add(11, ent.insertionPoint.x); dxf.add(21, ent.insertionPoint.y); dxf.add(31, 0);
+            dxf.add(7, 'Standard');
         }
     });
     dxf.add(0, 'ENDSEC');
