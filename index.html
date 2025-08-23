@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>MiniCAD - Geographic Coordinate System</title>
+<title>MiniCAD - US Feet Coordinate System</title>
 
 <!-- Leaflet CSS & JS (for map functionality) -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css"/>
@@ -147,9 +147,11 @@
       <button data-command="explode" title="Explode (X)">Explode</button>
       <button data-command="matchprop" title="Match Properties (MA)">Matchprop</button>
       <div class="sep"></div>
+       <!-- Inquiry & Utility -->
+      <button data-command="distance" title="Distance (DI)">Distance</button>
+      <button data-command="getaddress" title="Get Address (ADDR)">Get Address</button>
       <button data-command="imagetext" title="Image Text (IT)">Image Text</button>
       <button data-command="maptocad" title="Map to CAD (MTC)">Map to CAD</button>
-      <button data-command="getaddress" title="Get Address (ADDR)">Get Address</button>
       <div class="sep"></div>
       <button id="toggleMapBtn" title="Show Satellite Map">Show Satellite</button>
       <div class="sep"></div>
@@ -188,7 +190,7 @@
                 <div class="row"><label for="propTextLayer">Layer</label><select id="propTextLayer"></select></div>
                 <div class="row"><label for="propTextColor">Color</label><input type="color" id="propTextColor"></div>
                 <div class="row"><label for="propTextContent">Contents</label><input type="text" id="propTextContent"></div>
-                <div class="row"><label for="propTextHeight">Height</label><input type="number" id="propTextHeight" value="0.0001" step="0.00001"></div>
+                <div class="row"><label for="propTextHeight">Height (ft)</label><input type="number" id="propTextHeight" value="10" step="0.1"></div>
                 <div class="row"><label for="propTextRotation">Rotation</label><input type="number" id="propTextRotation" value="0" step="1"></div>
             </div>
         </div>
@@ -218,7 +220,7 @@
     </div>
 
     <div class="status">
-      <div id="cursorPos">0.00000, 0.00000</div>
+      <div id="cursorPos">X: 0.00 ft, Y: 0.00 ft</div>
       <div>
         <span class="status-chip" id="gridToggle" title="Toggle Grid (F7)">Grid</span>
         <span class="status-chip" id="orthoToggle" title="Toggle Ortho (F8)">Ortho</span>
@@ -316,8 +318,8 @@
         thickness: 0.0,
     },
     clipboard: { data: [], basePoint: null },
-    viewHistory: [], // <--- ADD THIS LINE
-    isZoomingProgrammatically: false // <--- AND ADD THIS LINE
+    viewHistory: [],
+    isZoomingProgrammatically: false
   };
   let nextId = 1;
 
@@ -326,11 +328,19 @@
   let mapTileLayerSatellite = null;
   let mapTileLayerStreet = null;
   let mapState = 0; // 0: Off, 1: Satellite, 2: Street
+  
+  // --- CORRECTED COORDINATE SYSTEM STATE ---
+  const METERS_TO_FEET = 3.2808399; // U.S. Survey Foot
+  const FEET_TO_METERS = 1 / METERS_TO_FEET;
+  let cadOrigin = null; // { lat, lng }
+  let feetPerDegree = null; // { lat, lng }
+
 
   // --- INITIALIZATION ---
   function init() {
       resize();
       initMap();
+      setCadOrigin(); // CRITICAL: Establish the local coordinate system
       populateStaticSelects();
       bindEvents();
       refreshLayersUI();
@@ -345,6 +355,26 @@
           logToHistory("Map to CAD engine loaded.");
       };
   }
+
+  function setCadOrigin() {
+      cadOrigin = leafletMap.getCenter();
+      
+      const p1 = cadOrigin;
+      const p2_lat = L.latLng(p1.lat + 1, p1.lng);
+      const p2_lng = L.latLng(p1.lat, p1.lng + 1);
+      
+      const dist_lat_meters = leafletMap.options.crs.distance(p1, p2_lat);
+      const dist_lng_meters = leafletMap.options.crs.distance(p1, p2_lng);
+
+      feetPerDegree = {
+          lat: dist_lat_meters * METERS_TO_FEET,
+          lng: dist_lng_meters * METERS_TO_FEET
+      };
+      console.log("CAD Origin Set:", cadOrigin);
+      console.log("Scale Factors (ft/degree):", feetPerDegree);
+      logToHistory("Local coordinate system established in U.S. Survey Feet.");
+  }
+
    function populateStaticSelects() {
         const linetypeSelect = document.getElementById('propLinetype');
         state.linetypes.forEach(lt => {
@@ -386,61 +416,49 @@
   }
 
   // =======================================================
-  // SECTION: COORDINATE SYSTEM & GEOMETRY
+  // SECTION: COORDINATE SYSTEM & GEOMETRY (FEET-BASED)
   // =======================================================
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const distScreen = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
 
-  function screenToWorld(p) {
-      if (!leafletMap) return { x: 0, y: 0 };
-      const latLng = leafletMap.containerPointToLatLng([p.x, p.y]);
-      return { x: latLng.lng, y: latLng.lat };
+  function screenToWorld(p_screen) {
+      if (!leafletMap || !cadOrigin) return { x: 0, y: 0 };
+      const latLng = leafletMap.containerPointToLatLng(p_screen);
+      const dLat = latLng.lat - cadOrigin.lat;
+      const dLng = latLng.lng - cadOrigin.lng;
+      return { x: dLng * feetPerDegree.lng, y: dLat * feetPerDegree.lat };
   }
 
-  function worldToScreen(p) {
-      if (!leafletMap) return { x: 0, y: 0 };
-      const screenPoint = leafletMap.latLngToContainerPoint([p.y, p.x]);
-      return screenPoint;
+  function worldToScreen(p_world_ft) {
+      if (!leafletMap || !cadOrigin) return { x: 0, y: 0 };
+      const dLat = p_world_ft.y / feetPerDegree.lat;
+      const dLng = p_world_ft.x / feetPerDegree.lng;
+      const targetLatLng = { lat: cadOrigin.lat + dLat, lng: cadOrigin.lng + dLng };
+      return leafletMap.latLngToContainerPoint(targetLatLng);
   }
 
-  function getDestinationPoint(startPoint, distance, bearing) {
-    const R = 6378137; // Earth's radius in meters
-    const lat1 = startPoint.y * Math.PI/180;
-    const lon1 = startPoint.x * Math.PI/180;
-    const brng = bearing * Math.PI/180;
-
-    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(distance/R) +
-                          Math.cos(lat1) * Math.sin(distance/R) * Math.cos(brng));
-    const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(distance/R) * Math.cos(lat1),
-                                 Math.cos(distance/R) - Math.sin(lat1) * Math.sin(lat2));
-
-    return { y: lat2 * 180/Math.PI, x: (lon2 * 180/Math.PI + 540) % 360 - 180 };
+  function getDestinationPoint(startPoint_ft, distance_ft, bearing_deg) {
+    const bearing_rad = bearing_deg * Math.PI / 180;
+    const dx = distance_ft * Math.sin(bearing_rad);
+    const dy = distance_ft * Math.cos(bearing_rad);
+    return { x: startPoint_ft.x + dx, y: startPoint_ft.y + dy };
   }
 
-  function getBearing(p1, p2) { // p = {x: lon, y: lat}
-      const lat1 = p1.y * Math.PI / 180;
-      const lon1 = p1.x * Math.PI / 180;
-      const lat2 = p2.y * Math.PI / 180;
-      const lon2 = p2.x * Math.PI / 180;
-
-      const y = Math.sin(lon2 - lon1) * Math.cos(lat2);
-      const x = Math.cos(lat1) * Math.sin(lat2) -
-                Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1);
-      const brng = Math.atan2(y, x);
-      const brngDegrees = (brng * 180 / Math.PI + 360) % 360; // in degrees
-      return brngDegrees;
+  function getBearing(p1_ft, p2_ft) {
+      const dx = p2_ft.x - p1_ft.x;
+      const dy = p2_ft.y - p1_ft.y;
+      const angleRad = Math.atan2(dx, dy);
+      const angleDeg = (angleRad * 180 / Math.PI + 360) % 360;
+      return angleDeg;
   }
 
-
-  function orthoPoint(from, to) {
-    const fromScreen = worldToScreen(from);
-    const toScreen = worldToScreen(to);
-    const dx = Math.abs(toScreen.x - fromScreen.x);
-    const dy = Math.abs(toScreen.y - fromScreen.y);
+  function orthoPoint(from_ft, to_ft) {
+    const dx = Math.abs(to_ft.x - from_ft.x);
+    const dy = Math.abs(to_ft.y - from_ft.y);
     if (dx > dy) {
-        return screenToWorld({ x: toScreen.x, y: fromScreen.y });
+        return { x: to_ft.x, y: from_ft.y };
     } else {
-        return screenToWorld({ x: fromScreen.x, y: toScreen.y });
+        return { x: from_ft.x, y: to_ft.y };
     }
   }
 
@@ -506,12 +524,13 @@
     'text': { alias: 't', execute: startTextCommand, prompt: "Specify insertion point:" },
     'mtext': { alias: 'mt', execute: startMtextCommand, prompt: "Specify first corner of text box:" },
     'erase': { alias: 'e', execute: startEraseCommand, prompt: "Select objects:" },
-    'offset': { alias: 'o', execute: startOffsetCommand, prompt: "Specify offset distance:" },
+    'offset': { alias: 'o', execute: startOffsetCommand, prompt: "Specify offset distance (feet):" },
     'move': { alias: 'm', execute: startMoveCommand, prompt: "Specify base point:" },
     'copy': { alias: 'co', execute: startCopyCommand, prompt: "Specify base point:" },
     'paste': { alias: 'paste', execute: startPasteCommand, prompt: "Specify insertion point:" },
     'rotate': { alias: 'ro', execute: startRotateCommand, prompt: "Specify base point:" },
     'scale': { alias: 'sc', execute: startScaleCommand, prompt: "Specify base point:" },
+    'distance': { alias: 'di', execute: startDistanceCommand, prompt: "Specify first point:" },
     'getaddress': { alias: 'addr', execute: startGetAddressCommand, prompt: "Select a closed polyline or specify a point:" },
     'imagetext': { alias: 'it', execute: startImageTextCommand, prompt: "Specify first corner of text area:" },
     'maptocad': { alias: 'mtc', execute: startMapToCadCommand, prompt: "Specify first corner of boundary:" },
@@ -519,19 +538,19 @@
     'stretch': { alias: 's', execute: startStretchCommand, prompt: "Select objects to stretch by crossing-window..." },
     'trim': { alias: 'tr', execute: startTrimCommand, prompt: "Select cutting edges... Then press Enter." },
     'extend': { alias: 'ex', execute: startExtendCommand, prompt: "Select boundary edges... Then press Enter." },
-    'fillet': { alias: 'f', execute: startFilletCommand, prompt: "Specify fillet radius:" },
-    'chamfer': { alias: 'cha', execute: startChamferCommand, prompt: "Specify first chamfer distance:" },
+    'fillet': { alias: 'f', execute: startFilletCommand, prompt: "Specify fillet radius (feet):" },
+    'chamfer': { alias: 'cha', execute: startChamferCommand, prompt: "Specify first chamfer distance (feet):" },
     'join': { alias: 'j', execute: startJoinCommand, prompt: "Select objects to join:" },
     'explode': { alias: 'x', execute: startExplodeCommand, prompt: "Select objects to explode:" },
     'matchprop': { alias: 'ma', execute: startMatchpropCommand, prompt: "Select source object:" },
     'break': { alias: 'br', execute: startBreakCommand, prompt: "Select object to break:" },
-    'lengthen': { alias: 'len', execute: startLengthenCommand, prompt: "Enter delta distance:" },
+    'lengthen': { alias: 'len', execute: startLengthenCommand, prompt: "Enter delta distance (feet):" },
     'array': { alias: 'ar', execute: startArrayCommand, prompt: "Enter number of rows:" },
     'zoom': { alias: 'z', execute: startZoomCommand, prompt: "Enter an option [Extents/Window/Previous/Object]:" }
   };
 
   function runCommand(cmdStr) {
-    cancelGripEdit(); // Always cancel grip edit when a new command starts
+    cancelGripEdit();
     if (!cmdStr) { if(state.lastCommand) runCommand(state.lastCommand.name); return; }
     const args = cmdStr.toLowerCase().trim().split(' ');
     const cmdName = args[0];
@@ -558,7 +577,7 @@
   // =======================================================
    function startTextCommand() {
     const cmd = state.activeCommand;
-    cmd.data.height = 0.0001; // Default world height
+    cmd.data.height = 10.0; // Default world height in feet
     cmd.data.rotation = 0;   // Default rotation
 
     cmd.execute = () => {
@@ -567,7 +586,7 @@
                 const pt = getPointInput();
                 if(pt) {
                     cmd.data.insertionPoint = pt;
-                    setPrompt(`Specify height <${cmd.data.height}>:`);
+                    setPrompt(`Specify height <${cmd.data.height.toFixed(1)} ft>:`);
                     cmd.step = 1;
                 }
                 break;
@@ -576,7 +595,7 @@
                 if (heightPt) {
                     const dist = Math.hypot(heightPt.x - cmd.data.insertionPoint.x, heightPt.y - cmd.data.insertionPoint.y);
                     cmd.data.height = dist;
-                    logToHistory(`Height: ${cmd.data.height.toFixed(5)}`);
+                    logToHistory(`Height: ${cmd.data.height.toFixed(2)} ft`);
                     setPrompt(`Specify rotation angle <${cmd.data.rotation}>:`);
                     cmd.step = 2;
                 }
@@ -624,7 +643,7 @@
 
         if(cmd.step === 1) { // Processing height from command line
             cmd.data.height = num;
-            logToHistory(`Height: ${num}`);
+            logToHistory(`Height: ${num} ft`);
             setPrompt(`Specify rotation angle <${cmd.data.rotation}>:`);
             cmd.step = 2;
             cmdInput.value = '';
@@ -664,9 +683,15 @@
       };
   }
 
-  async function fetchAndPlaceAddress(point) {
+  async function fetchAndPlaceAddress(pointInFeet) {
     logToHistory("Fetching address...");
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${point.y}&lon=${point.x}&zoom=18&addressdetails=1`;
+    
+    // Convert our internal feet coordinates back to Lat/Lon for the API call
+    const dLat = pointInFeet.y / feetPerDegree.lat;
+    const dLng = pointInFeet.x / feetPerDegree.lng;
+    const latLng = { lat: cadOrigin.lat + dLat, lng: cadOrigin.lng + dLng };
+
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latLng.lat}&lon=${latLng.lng}&zoom=18&addressdetails=1`;
     try {
         const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
         if (!response.ok) throw new Error('Network error');
@@ -677,9 +702,9 @@
             logToHistory(`Address found: ${address}`);
             pushEnt({
                 type: 'text',
-                insertionPoint: point,
+                insertionPoint: pointInFeet, // Use the original point in feet
                 textString: address,
-                height: 0.0001, // Default world height
+                height: 10.0, // Default world height in feet
                 rotation: 0,
                 layer: state.currentLayer,
                 props: curProps()
@@ -802,8 +827,11 @@
               const centerX_screen = rect.x + (bbox.x0 + bbox.x1) / 2;
               const centerY_screen = rect.y + (bbox.y0 + bbox.y1) / 2;
               const insertionPoint_world = screenToWorld({ x: centerX_screen, y: centerY_screen });
-              const bottomOfText_world = screenToWorld({x: centerX_screen, y: centerY_screen + bbox.y1 - bbox.y0});
-              const worldHeight = Math.abs(bottomOfText_world.y - insertionPoint_world.y);
+              
+              const topOfText_screen = {x: centerX_screen, y: centerY_screen - bbox.height};
+              const topOfText_world = screenToWorld(topOfText_screen);
+
+              const worldHeight = Math.hypot(insertionPoint_world.x - topOfText_world.x, insertionPoint_world.y - topOfText_world.y);
 
               pushEnt({
                   type: 'text',
@@ -973,14 +1001,12 @@
       const cmd = state.activeCommand;
       cmd.execute = () => {
           switch (cmd.step) {
-              case 0: const center = getPointInput(); if (center) { cmd.data.center = center; setPrompt("Specify radius of circle:"); cmd.step++; } break;
+              case 0: const center = getPointInput(); if (center) { cmd.data.center = center; setPrompt("Specify radius of circle (feet):"); cmd.step++; } break;
               case 1:
                   const radiusPt = getPointInput();
                   if (radiusPt) {
-                      const centerLatLng = L.latLng(cmd.data.center.y, cmd.data.center.x);
-                      const radiusPtLatLng = L.latLng(radiusPt.y, radiusPt.x);
-                      const radiusInMeters = centerLatLng.distanceTo(radiusPtLatLng);
-                      pushEnt({type:'circle', c:cmd.data.center, r:radiusInMeters, layer:state.currentLayer, props:curProps()});
+                      const radiusInFeet = Math.hypot(radiusPt.x - cmd.data.center.x, radiusPt.y - cmd.data.center.y);
+                      pushEnt({type:'circle', c:cmd.data.center, r:radiusInFeet, layer:state.currentLayer, props:curProps()});
                       completeCommand();
                   }
                   break;
@@ -1075,13 +1101,13 @@
           if (cmd.step === 0) {
               const dist = parseFloat(input);
               if (!isNaN(dist) && dist !== 0) {
-                  cmd.data.distance = Math.abs(dist);
-                  logToHistory(`Offset distance: ${Math.abs(dist)}m`);
+                  cmd.data.distance = Math.abs(dist); // Distance is in feet
+                  logToHistory(`Offset distance: ${Math.abs(dist)} ft`);
                   setPrompt("Select object to offset:");
                   cmd.step = 1;
               } else {
                   logToHistory(`Invalid distance "${input}".`);
-                  setPrompt("Specify offset distance:");
+                  setPrompt("Specify offset distance (feet):");
               }
           }
       };
@@ -1103,17 +1129,13 @@
               let newEnt = null;
 
               if (sourceEnt.type === 'circle') {
-                  const centerLatLng = L.latLng(sourceEnt.c.y, sourceEnt.c.x);
-                  const sidePointLatLng = L.latLng(sidePoint.y, sidePoint.x);
-                  const distToCenterMeters = centerLatLng.distanceTo(sidePointLatLng);
-                  
-                  const sign = distToCenterMeters > sourceEnt.r ? 1 : -1;
+                  const distToCenter = Math.hypot(sidePoint.x - sourceEnt.c.x, sidePoint.y - sourceEnt.c.y);
+                  const sign = distToCenter > sourceEnt.r ? 1 : -1;
                   const newRadius = sourceEnt.r + (cmd.data.distance * sign);
 
                   if (newRadius > 0) {
                     newEnt = {
-                        type: 'circle', c: sourceEnt.c,
-                        r: newRadius,
+                        type: 'circle', c: sourceEnt.c, r: newRadius,
                         layer: sourceEnt.layer, props: { ...sourceEnt.props }
                     };
                   } else {
@@ -1126,61 +1148,47 @@
                       pts_w.pop();
                   }
                   if (pts_w.length < 2) { cancelCommand(); return; }
-
-                  // CORRECTED METER -> PIXEL CONVERSION
-                  const mapScale = leafletMap.getZoomScale(leafletMap.getZoom(), 0); // THE FIX IS HERE
-                  const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
-                  if (metersPerPixel < 1e-9) { logToHistory("Cannot calculate offset at this zoom level."); cancelCommand(); return; }
-                  const pixel_dist = cmd.data.distance / metersPerPixel;
-
-                  const pts_s = pts_w.map(worldToScreen);
-                  const sidePoint_s = worldToScreen(sidePoint);
-
-                  const cross_product = (pts_s[1].x - pts_s[0].x) * (sidePoint_s.y - pts_s[0].y) - (pts_s[1].y - pts_s[0].y) * (sidePoint_s.x - pts_s[0].x);
-                  const offset_sign = Math.sign(cross_product) || 1;
+                  
+                  // Determine offset side using world-space cross product
+                  const p1 = pts_w[0]; const p2 = pts_w[1];
+                  const cross_product = (p2.x - p1.x) * (sidePoint.y - p1.y) - (p2.y - p1.y) * (sidePoint.x - p1.x);
+                  const offset_angle_mod = cross_product > 0 ? -90 : 90;
 
                   const parallel_segments = [];
-                  for (let i = 0; i < (isClosed ? pts_s.length : pts_s.length - 1); i++) {
-                      const p1 = pts_s[i];
-                      const p2 = pts_s[(i + 1) % pts_s.length];
-                      const dx = p2.x - p1.x;
-                      const dy = p2.y - p1.y;
-                      const len = Math.hypot(dx, dy);
-                      if (len < 1e-6) continue;
-                      
-                      const normal_x = -dy / len;
-                      const normal_y = dx / len;
-                      
+                  for (let i = 0; i < (isClosed ? pts_w.length : pts_w.length - 1); i++) {
+                      const seg_p1 = pts_w[i];
+                      const seg_p2 = pts_w[(i + 1) % pts_w.length];
+                      const bearing = getBearing(seg_p1, seg_p2);
+                      const normal_bearing = (bearing + offset_angle_mod + 360) % 360;
                       parallel_segments.push([
-                          { x: p1.x + normal_x * pixel_dist * offset_sign, y: p1.y + normal_y * pixel_dist * offset_sign },
-                          { x: p2.x + normal_x * pixel_dist * offset_sign, y: p2.y + normal_y * pixel_dist * offset_sign }
+                          getDestinationPoint(seg_p1, cmd.data.distance, normal_bearing),
+                          getDestinationPoint(seg_p2, cmd.data.distance, normal_bearing)
                       ]);
                   }
                   
                   if (parallel_segments.length === 0) { logToHistory("Could not offset object."); cancelCommand(); return; }
                   
-                  const new_pts_s = [];
-                  if (!isClosed) { new_pts_s.push(parallel_segments[0][0]); }
+                  const new_pts_w = [];
+                  if (!isClosed) { new_pts_w.push(parallel_segments[0][0]); }
 
                   for (let i = 0; i < (isClosed ? parallel_segments.length : parallel_segments.length - 1); i++) {
                       const seg1 = parallel_segments[i];
                       const seg2 = parallel_segments[(i + 1) % parallel_segments.length];
                       const intersection = intersectLineLineScreen(seg1[0], seg1[1], seg2[0], seg2[1], true);
-                      new_pts_s.push(intersection || seg1[1]);
+                      new_pts_w.push(intersection || seg1[1]);
                   }
                   
                   if (!isClosed) {
-                      new_pts_s.push(parallel_segments[parallel_segments.length - 1][1]);
-                  } else if (new_pts_s.length > 0) {
-                      new_pts_s.push(new_pts_s[0]);
+                      new_pts_w.push(parallel_segments[parallel_segments.length - 1][1]);
+                  } else if (new_pts_w.length > 0) {
+                      new_pts_w.push(new_pts_w[0]);
                   }
 
-                  const finalPts_w = new_pts_s.map(screenToWorld);
                   newEnt = { layer: sourceEnt.layer, props: { ...sourceEnt.props } };
                   if (sourceEnt.type === 'line') {
-                      newEnt.type = 'line'; newEnt.a = finalPts_w[0]; newEnt.b = finalPts_w[1];
+                      newEnt.type = 'line'; newEnt.a = new_pts_w[0]; newEnt.b = new_pts_w[1];
                   } else {
-                      newEnt.type = 'polyline'; newEnt.pts = finalPts_w; newEnt.closed = isClosed;
+                      newEnt.type = 'polyline'; newEnt.pts = new_pts_w; newEnt.closed = isClosed;
                   }
               }
 
@@ -1209,11 +1217,8 @@
           if (cmd.step === 0) {
               const r = parseFloat(input);
               if (!isNaN(r) && r >= 0) {
-                  cmd.data.radius = r;
-                  const mapScale = leafletMap.getZoomScale(leafletMap.getZoom());
-                  const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
-                  cmd.data.pixelRadius = r / metersPerPixel;
-                  logToHistory(`Fillet radius: ${r}m`);
+                  cmd.data.radius = r; // Radius is now correctly in feet
+                  logToHistory(`Fillet radius: ${r} ft`);
                   setPrompt("Select first object to fillet:");
                   cmd.step = 1;
               } else {
@@ -1231,7 +1236,7 @@
               cmd.step = 2;
           } else if (cmd.step === 2) {
               cmd.data.ent2 = hit;
-              performFillet(cmd.data.ent1, cmd.data.ent2, cmd.data.pixelRadius, false);
+              performFillet(cmd.data.ent1, cmd.data.ent2, cmd.data.radius, false);
               completeCommand();
           }
       };
@@ -1243,19 +1248,15 @@
       cmd.processInput = (input) => {
           const d = parseFloat(input);
           if (isNaN(d) || d < 0) { logToHistory("Invalid distance."); return; }
-          const mapScale = leafletMap.getZoomScale(leafletMap.getZoom());
-          const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
 
           if (cmd.step === 0) {
               cmd.data.d1 = d;
-              cmd.data.pixel_d1 = d / metersPerPixel;
-              logToHistory(`First distance: ${d}m`);
-              setPrompt("Specify second chamfer distance:");
+              logToHistory(`First distance: ${d} ft`);
+              setPrompt("Specify second chamfer distance (feet):");
               cmd.step = 1;
           } else if (cmd.step === 1) {
               cmd.data.d2 = d;
-              cmd.data.pixel_d2 = d / metersPerPixel;
-              logToHistory(`Second distance: ${d}m`);
+              logToHistory(`Second distance: ${d} ft`);
               setPrompt("Select first line:");
               cmd.step = 2;
           }
@@ -1269,72 +1270,63 @@
               cmd.step = 3;
           } else if (cmd.step === 3) {
               cmd.data.ent2 = hit;
-              performFillet(cmd.data.ent1, cmd.data.ent2, {d1: cmd.data.pixel_d1, d2: cmd.data.pixel_d2}, true);
+              performFillet(cmd.data.ent1, cmd.data.ent2, {d1: cmd.data.d1, d2: cmd.data.d2}, true);
               completeCommand();
           }
       };
   }
 
-  function performFillet(ent1, ent2, radiusOrDist, isChamfer) {
+  function performFillet(ent1, ent2, radiusOrDist_ft, isChamfer) {
       if (ent1.id === ent2.id) { logToHistory("Cannot fillet/chamfer an object with itself."); return; }
       
-      const l1 = ent1.type === 'line' ? {p1: ent1.a, p2: ent1.b} : {p1: ent1.pts[0], p2: ent1.pts[1]}; // Simplified for demo
-      const l2 = ent2.type === 'line' ? {p1: ent2.a, p2: ent2.b} : {p1: ent2.pts[0], p2: ent2.pts[1]}; // Needs improvement for multi-segment polylines
+      const l1_w = ent1.type === 'line' ? {p1: ent1.a, p2: ent1.b} : {p1: ent1.pts[0], p2: ent1.pts[1]};
+      const l2_w = ent2.type === 'line' ? {p1: ent2.a, p2: ent2.b} : {p1: ent2.pts[0], p2: ent2.pts[1]};
 
-      const p1_s = worldToScreen(l1.p1), p2_s = worldToScreen(l1.p2);
-      const p3_s = worldToScreen(l2.p1), p4_s = worldToScreen(l2.p2);
+      const intersection_w = intersectLineLineScreen(l1_w.p1, l1_w.p2, l2_w.p1, l2_w.p2, true);
+      if (!intersection_w) { logToHistory("Lines are parallel, cannot proceed."); return; }
 
-      const intersection = intersectLineLineScreen(p1_s, p2_s, p3_s, p4_s, true);
-      if (!intersection) { logToHistory("Lines are parallel, cannot proceed."); return; }
+      const v1 = { x: l1_w.p2.x - l1_w.p1.x, y: l1_w.p2.y - l1_w.p1.y }; let len = Math.hypot(v1.x, v1.y); v1.x /= len; v1.y /= len;
+      const v2 = { x: l2_w.p2.x - l2_w.p1.x, y: l2_w.p2.y - l2_w.p1.y }; len = Math.hypot(v2.x, v2.y); v2.x /= len; v2.y /= len;
 
-      const v1 = { x: p2_s.x - p1_s.x, y: p2_s.y - p1_s.y }; const len1 = Math.hypot(v1.x, v1.y); v1.x /= len1; v1.y /= len1;
-      const v2 = { x: p4_s.x - p3_s.x, y: p4_s.y - p3_s.y }; const len2 = Math.hypot(v2.x, v2.y); v2.x /= len2; v2.y /= len2;
-
-      // Make vectors point away from intersection
-      if (distScreen(p1_s, intersection) > distScreen(p2_s, intersection)) { v1.x *= -1; v1.y *= -1; }
-      if (distScreen(p3_s, intersection) > distScreen(p4_s, intersection)) { v2.x *= -1; v2.y *= -1; }
+      if (Math.hypot(l1_w.p1.x - intersection_w.x, l1_w.p1.y - intersection_w.y) > Math.hypot(l1_w.p2.x - intersection_w.x, l1_w.p2.y - intersection_w.y)) { v1.x *= -1; v1.y *= -1; }
+      if (Math.hypot(l2_w.p1.x - intersection_w.x, l2_w.p1.y - intersection_w.y) > Math.hypot(l2_w.p2.x - intersection_w.x, l2_w.p2.y - intersection_w.y)) { v2.x *= -1; v2.y *= -1; }
 
       if (isChamfer) {
-          const { d1, d2 } = radiusOrDist;
-          const cp1 = { x: intersection.x + v1.x * d1, y: intersection.y + v1.y * d1 };
-          const cp2 = { x: intersection.x + v2.x * d2, y: intersection.y + v2.y * d2 };
+          const { d1, d2 } = radiusOrDist_ft;
+          const cp1 = { x: intersection_w.x + v1.x * d1, y: intersection_w.y + v1.y * d1 };
+          const cp2 = { x: intersection_w.x + v2.x * d2, y: intersection_w.y + v2.y * d2 };
           
-          pushEnt({ type: 'line', a: screenToWorld(cp1), b: screenToWorld(cp2), layer: ent1.layer, props: { ...ent1.props }});
+          pushEnt({ type: 'line', a: cp1, b: cp2, layer: ent1.layer, props: { ...ent1.props }});
           
-          // Trim original lines (simplified)
-          if (distScreen(p1_s, intersection) > distScreen(p2_s, intersection)) ent1.a = screenToWorld(cp1); else ent1.b = screenToWorld(cp1);
-          if (distScreen(p3_s, intersection) > distScreen(p4_s, intersection)) ent2.a = screenToWorld(cp2); else ent2.b = screenToWorld(cp2);
-
+          if (Math.hypot(l1_w.p1.x - intersection_w.x, l1_w.p1.y - intersection_w.y) > Math.hypot(l1_w.p2.x - intersection_w.x, l1_w.p2.y - intersection_w.y)) ent1.a = cp1; else ent1.b = cp1;
+          if (Math.hypot(l2_w.p1.x - intersection_w.x, l2_w.p1.y - intersection_w.y) > Math.hypot(l2_w.p2.x - intersection_w.x, l2_w.p2.y - intersection_w.y)) ent2.a = cp2; else ent2.b = cp2;
           logToHistory("Chamfer complete.");
 
       } else { // Fillet
-          const radius = radiusOrDist;
+          const radius_ft = radiusOrDist_ft;
           const angle = Math.acos(v1.x * v2.x + v1.y * v2.y);
-          if (Math.abs(angle) < 1e-6) { logToHistory("Lines are collinear."); return; }
-          const distToTangent = radius / Math.tan(angle / 2);
+          if (Math.abs(angle) < 1e-6 || Math.abs(angle - Math.PI) < 1e-6) { logToHistory("Lines are parallel or collinear."); return; }
+          const distToTangent = radius_ft / Math.tan(angle / 2);
           
-          const t1 = { x: intersection.x + v1.x * distToTangent, y: intersection.y + v1.y * distToTangent };
-          const t2 = { x: intersection.x + v2.x * distToTangent, y: intersection.y + v2.y * distToTangent };
+          const t1 = { x: intersection_w.x + v1.x * distToTangent, y: intersection_w.y + v1.y * distToTangent };
+          const t2 = { x: intersection_w.x + v2.x * distToTangent, y: intersection_w.y + v2.y * distToTangent };
           
-          const bisector = { x: v1.x + v2.x, y: v1.y + v2.y }; const lenB = Math.hypot(bisector.x, bisector.y); bisector.x /= lenB; bisector.y /= lenB;
-          const distToCenter = radius / Math.sin(angle/2);
-          const center = { x: intersection.x + bisector.x * distToCenter, y: intersection.y + bisector.y * distToCenter };
+          const bisector = { x: v1.x + v2.x, y: v1.y + v2.y }; len = Math.hypot(bisector.x, bisector.y); bisector.x /= len; bisector.y /= len;
+          const distToCenter = radius_ft / Math.sin(angle/2);
+          const center = { x: intersection_w.x + bisector.x * distToCenter, y: intersection_w.y + bisector.y * distToCenter };
 
-          // Correct center side
           const crossProduct = v1.x * v2.y - v1.y * v2.x;
-          if (crossProduct < 0) { // Assuming screen coords: +y is down
-              const bisector_perp = {x: -bisector.y, y: bisector.x};
-              const check_side_v = {x: v1.x-v2.x, y: v1.y-v2.y};
-              if(bisector_perp.x*check_side_v.x + bisector_perp.y*check_side_v.y < 0){
-                  center.x = intersection.x - bisector.x * distToCenter;
-                  center.y = intersection.y - bisector.y * distToCenter;
-              }
+          const bisector_perp = {x: -bisector.y, y: bisector.x};
+          const check_side_v = {x: v1.x-v2.x, y: v1.y-v2.y};
+          if(bisector_perp.x*check_side_v.x + bisector_perp.y*check_side_v.y < 0 !== crossProduct > 0){
+             center.x = intersection_w.x - bisector.x * distToCenter;
+             center.y = intersection_w.y - bisector.y * distToCenter;
           }
 
           const startAngle = Math.atan2(t1.y - center.y, t1.x - center.x);
           const endAngle = Math.atan2(t2.y - center.y, t2.x - center.x);
 
-          const arcPts_s = [];
+          const arcPts_w = [];
           const segments = 20;
           let angleDiff = endAngle - startAngle;
           if (crossProduct > 0 && angleDiff < 0) angleDiff += Math.PI * 2;
@@ -1342,14 +1334,13 @@
           
           for (let i = 0; i <= segments; i++) {
               const ang = startAngle + (angleDiff * i) / segments;
-              arcPts_s.push({ x: center.x + radius * Math.cos(ang), y: center.y + radius * Math.sin(ang) });
+              arcPts_w.push({ x: center.x + radius_ft * Math.cos(ang), y: center.y + radius_ft * Math.sin(ang) });
           }
           
-          pushEnt({ type: 'polyline', pts: arcPts_s.map(screenToWorld), closed: false, layer: ent1.layer, props: { ...ent1.props }});
+          pushEnt({ type: 'polyline', pts: arcPts_w, closed: false, layer: ent1.layer, props: { ...ent1.props }});
           
-          if (distScreen(p1_s, intersection) > distScreen(p2_s, intersection)) ent1.a = screenToWorld(t1); else ent1.b = screenToWorld(t1);
-          if (distScreen(p3_s, intersection) > distScreen(p4_s, intersection)) ent2.a = screenToWorld(t2); else ent2.b = screenToWorld(t2);
-
+          if (Math.hypot(l1_w.p1.x - intersection_w.x, l1_w.p1.y - intersection_w.y) > Math.hypot(l1_w.p2.x - intersection_w.x, l1_w.p2.y - intersection_w.y)) ent1.a = t1; else ent1.b = t1;
+          if (Math.hypot(l2_w.p1.x - intersection_w.x, l2_w.p1.y - intersection_w.y) > Math.hypot(l2_w.p2.x - intersection_w.x, l2_w.p2.y - intersection_w.y)) ent2.a = t2; else ent2.b = t2;
           logToHistory("Fillet complete.");
       }
       snapshot();
@@ -1530,6 +1521,36 @@
 
   function startRotateCommand() { startTransformCommand('rotate'); }
   function startScaleCommand() { startTransformCommand('scale'); }
+  
+  function startDistanceCommand() {
+      const cmd = state.activeCommand;
+      cmd.execute = () => {
+          switch (cmd.step) {
+              case 0:
+                  const p1 = getPointInput();
+                  if (p1) {
+                      cmd.data.start = p1;
+                      setPrompt("Specify second point:");
+                      cmd.step++;
+                  }
+                  break;
+              case 1:
+                  const p2 = getPointInput();
+                  if (p2) {
+                      const dx = p2.x - cmd.data.start.x;
+                      const dy = p2.y - cmd.data.start.y;
+                      const dist = Math.hypot(dx, dy);
+                      
+                      logToHistory(`Distance: ${dist.toFixed(4)} ft`);
+                      logToHistory(`Delta X: ${dx.toFixed(4)} ft, Delta Y: ${dy.toFixed(4)} ft`);
+                      
+                      completeCommand();
+                  }
+                  break;
+          }
+      };
+  }
+  
     // =======================================================
     // SECTION: NEWLY ADDED & FIXED COMMANDS
     // =======================================================
@@ -1828,12 +1849,12 @@
                     break;
                 case 1:
                     cmd.data.cols = parseInt(num);
-                    setPrompt("Specify distance between rows (meters):");
+                    setPrompt("Specify distance between rows (feet):");
                     cmd.step++;
                     break;
                 case 2:
                     cmd.data.rowSpacing = num;
-                    setPrompt("Specify distance between columns (meters):");
+                    setPrompt("Specify distance between columns (feet):");
                     cmd.step++;
                     break;
                 case 3:
@@ -1848,62 +1869,48 @@
       const cmd = state.activeCommand;
       cmd.data = {}; // Reset data for this command instance
 
-      // This function processes the user's text input (E, W, P, etc.)
       cmd.processInput = (input) => {
           const option = input.trim().toLowerCase();
           switch (option) {
-              case 'e':
-              case 'extents':
-                  zoomExtents();
-                  completeCommand();
-                  break;
-
-              case 'w':
-              case 'window':
+              case 'e': case 'extents': zoomExtents(); completeCommand(); break;
+              case 'w': case 'window':
                   logToHistory("Zoom Window activated.");
                   setPrompt("Specify first corner:");
-                  cmd.step = 1; // Move to the 'window' step
+                  cmd.step = 1;
                   break;
-
-              case 'p':
-              case 'previous':
-                  zoomPrevious();
-                  completeCommand();
-                  break;
-              
-              case 'o':
-              case 'object':
+              case 'p': case 'previous': zoomPrevious(); completeCommand(); break;
+              case 'o': case 'object':
                    if (state.selection.length === 0) {
                        logToHistory("No objects selected. Please select objects before using Zoom Object.");
                        completeCommand();
                        return;
                    }
-                   zoomExtents(state.selection); // Use the selection
+                   zoomExtents(state.selection);
                    completeCommand();
                    break;
-
-              default:
-                  logToHistory(`Unknown zoom option "${input}".`);
-                  cancelCommand();
-                  break;
+              default: logToHistory(`Unknown zoom option "${input}".`); cancelCommand(); break;
           }
       };
 
-      // This function processes mouse clicks for Zoom Window
       cmd.execute = () => {
           if (cmd.step === 1) { // First corner for Zoom Window
               const p1 = getPointInput();
-              if (p1) {
-                  cmd.data.p1 = p1;
-                  setPrompt("Specify opposite corner:");
-                  cmd.step = 2;
-              }
+              if (p1) { cmd.data.p1 = p1; setPrompt("Specify opposite corner:"); cmd.step = 2; }
           } else if (cmd.step === 2) { // Second corner for Zoom Window
               const p2 = getPointInput();
               if (p2) {
-                  const bounds = L.latLngBounds(L.latLng(p1.y, p1.x), L.latLng(p2.y, p2.x));
+                  const dLat1 = cmd.data.p1.y / feetPerDegree.lat;
+                  const dLng1 = cmd.data.p1.x / feetPerDegree.lng;
+                  const p1_latlng = L.latLng(cadOrigin.lat + dLat1, cadOrigin.lng + dLng1);
+
+                  const dLat2 = p2.y / feetPerDegree.lat;
+                  const dLng2 = p2.x / feetPerDegree.lng;
+                  const p2_latlng = L.latLng(cadOrigin.lat + dLat2, cadOrigin.lng + dLng2);
+                  
+                  const bounds = L.latLngBounds(p1_latlng, p2_latlng);
+
                   if (bounds.isValid()) {
-                      saveCurrentView(); // Save the view before zooming
+                      saveCurrentView();
                       state.isZoomingProgrammatically = true;
                       leafletMap.fitBounds(bounds);
                   }
@@ -1914,62 +1921,49 @@
   }
   function zoomExtents(idList = null) {
       const targetEnts = idList ? idList.map(id => state.ents.find(e => e.id === id)).filter(Boolean) : state.ents;
-
-      if (targetEnts.length === 0) {
-          logToHistory("No objects to zoom to.");
-          return;
-      }
-
-      let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+      if (targetEnts.length === 0) { logToHistory("No objects to zoom to."); return; }
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
       targetEnts.forEach(ent => {
           const grips = getGripsForEnt(ent);
-          grips.forEach(pt => {
-              minLat = Math.min(minLat, pt.y);
-              maxLat = Math.max(maxLat, pt.y);
-              minLng = Math.min(minLng, pt.x);
-              maxLng = Math.max(maxLng, pt.x);
+          grips.forEach(pt => { // pt is in feet
+              minX = Math.min(minX, pt.x); maxX = Math.max(maxX, pt.x);
+              minY = Math.min(minY, pt.y); maxY = Math.max(maxY, pt.y);
           });
       });
       
-      const bounds = L.latLngBounds(L.latLng(minLat, minLng), L.latLng(maxLat, maxLng));
+      const sw_dLat = minY / feetPerDegree.lat; const sw_dLng = minX / feetPerDegree.lng;
+      const ne_dLat = maxY / feetPerDegree.lat; const ne_dLng = maxX / feetPerDegree.lng;
+      
+      const sw_latlng = L.latLng(cadOrigin.lat + sw_dLat, cadOrigin.lng + sw_dLng);
+      const ne_latlng = L.latLng(cadOrigin.lat + ne_dLat, cadOrigin.lng + ne_dLng);
+      const bounds = L.latLngBounds(sw_latlng, ne_latlng);
 
       if (bounds.isValid()) {
           saveCurrentView();
           state.isZoomingProgrammatically = true;
-          leafletMap.fitBounds(bounds, { padding: [20, 20] }); // Add some padding
+          leafletMap.fitBounds(bounds, { padding: [20, 20] });
       }
   }
 
   function zoomPrevious() {
-      if (state.viewHistory.length < 1) {
-          logToHistory("No previous view to restore.");
-          return;
-      }
+      if (state.viewHistory.length < 1) { logToHistory("No previous view to restore."); return; }
       const previousView = state.viewHistory.pop();
       state.isZoomingProgrammatically = true;
       leafletMap.setView(previousView.center, previousView.zoom);
       logToHistory("Zoomed to previous view.");
   }
 
-  // This function saves the current map view to our history stack
   function saveCurrentView() {
       if (state.isZoomingProgrammatically) {
-        state.isZoomingProgrammatically = false; // Reset the flag and do not save this view
+        state.isZoomingProgrammatically = false;
         return;
       }
-
-      const currentView = {
-          center: leafletMap.getCenter(),
-          zoom: leafletMap.getZoom()
-      };
-      // To prevent spamming history, only add if it's different from the last one
+      const currentView = { center: leafletMap.getCenter(), zoom: leafletMap.getZoom() };
       const lastView = state.viewHistory[state.viewHistory.length - 1];
       if (!lastView || !lastView.center.equals(currentView.center) || lastView.zoom !== currentView.zoom) {
           state.viewHistory.push(currentView);
-          if (state.viewHistory.length > 20) { // Keep history from getting too large
-              state.viewHistory.shift();
-          }
+          if (state.viewHistory.length > 20) { state.viewHistory.shift(); }
       }
   }
 
@@ -1981,17 +1975,14 @@
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
                 if (r === 0 && c === 0) continue;
-
                 originalEnts.forEach(originalEnt => {
                     const newEnt = JSON.parse(JSON.stringify(originalEnt));
                     delete newEnt.id;
-
                     const transformFunc = p => {
-                        let tempPt = getDestinationPoint(p, r * rowSpacing, 0); // North for rows
-                        tempPt = getDestinationPoint(tempPt, c * colSpacing, 90); // East for columns
+                        let tempPt = getDestinationPoint(p, r * rowSpacing, 0); // North (Y) for rows
+                        tempPt = getDestinationPoint(tempPt, c * colSpacing, 90); // East (X) for columns
                         return tempPt;
                     };
-
                     transformPoints(newEnt, transformFunc);
                     pushEnt(newEnt);
                 });
@@ -2132,25 +2123,16 @@
 
         if (state.activeCommand && state.activeCommand.name === 'mtext') {
             const { p1, p2 } = state.activeCommand.data;
-
-            // 1. The rotation IS the angle of the line drawn by the user.
             const rotation = getBearing(p1, p2);
-
-            // 2. The width IS the direct distance between the two points.
-            // This is the most intuitive result from what the user draws.
-            const width_m = L.latLng(p1.y, p1.x).distanceTo(L.latLng(p2.y, p2.x));
-
-            // 3. Set a reasonable default height for the text characters.
-            // A dynamic height based on the drawn box is complex and can be added later.
-            // This focuses on fixing the main rotation/width issue.
-            const text_height = 0.0001; 
+            const width_ft = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            const text_height_ft = 10.0; // Default height in feet
 
             pushEnt({
                 type: 'mtext',
                 insertionPoint: p1,
-                width: width_m,
-                height: text_height,
-                rotation: 0,
+                width: width_ft,
+                height: text_height_ft,
+                rotation: rotation,
                 textString: text,
                 layer: state.currentLayer,
                 props: curProps()
@@ -2197,6 +2179,12 @@
 
               logToHistory(`Location found: ${result.display_name}`);
               leafletMap.setView([lat, lon], 17);
+              // CRITICAL: Reset the CAD origin when moving to a new location
+              setCadOrigin();
+              // Optional: clear existing drawing or ask user
+              // state.ents = [];
+              // draw();
+              logToHistory("CAD origin reset to new location.");
           } else {
               logToHistory(`Could not find a location for "${query}".`);
           }
@@ -2352,7 +2340,7 @@
             newPt = orthoPoint(originalPt, newPt);
         }
         updateEntityWithNewGrip(ent, state.activeGrip.ptIndex, newPt);
-        cursorPosEl.textContent = `${newPt.y.toFixed(5)}, ${newPt.x.toFixed(5)}`;
+        cursorPosEl.textContent = `X: ${newPt.x.toFixed(2)} ft, Y: ${newPt.y.toFixed(2)} ft`;
         updateTooltipPosition(e);
         draw();
         return;
@@ -2366,7 +2354,7 @@
         }
     }
 
-    cursorPosEl.textContent = `${state.mouse.worldY.toFixed(5)}, ${state.mouse.worldX.toFixed(5)}`;
+    cursorPosEl.textContent = `X: ${state.mouse.worldX.toFixed(2)} ft, Y: ${state.mouse.worldY.toFixed(2)} ft`;
     updateTooltipPosition(e);
     draw();
   }
@@ -2462,14 +2450,12 @@
         ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
     } else if (e.type === 'circle') {
+        const center_s = worldToScreen(e.c);
+        const edge_w = { x: e.c.x + e.r, y: e.c.y }; // A point on the edge in world coords
+        const edge_s = worldToScreen(edge_w);
+        const radius_s = distScreen(center_s, edge_s);
         ctx.beginPath();
-        const segments = 64;
-        for (let i = 0; i <= segments; i++) {
-            const angle = (i / segments) * 360;
-            const ptW = getDestinationPoint(e.c, e.r, angle);
-            const ptS = worldToScreen(ptW);
-            if (i === 0) ctx.moveTo(ptS.x, ptS.y); else ctx.lineTo(ptS.x, ptS.y);
-        }
+        ctx.arc(center_s.x, center_s.y, radius_s, 0, Math.PI * 2);
         ctx.stroke();
     } else if (e.type === 'polyline' && e.pts.length > 1) {
         ctx.beginPath();
@@ -2485,18 +2471,20 @@
         const p_top_screen = worldToScreen(p_top_world);
         const screenPixelHeight = distScreen(p_s, p_top_screen);
         
+        if (screenPixelHeight < 1) return; // Don't draw tiny text
+
         ctx.font = `bold ${screenPixelHeight}px sans-serif`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
 
         ctx.save();
         ctx.translate(p_s.x, p_s.y);
-        ctx.rotate((e.rotation || 0) * Math.PI / 180);
+        ctx.rotate(-(e.rotation || 0) * Math.PI / 180);
         
         if (e.type === 'mtext') {
-            const p2_world = getDestinationPoint(e.insertionPoint, e.width, 90);
-            const p2_screen = worldToScreen(p2_world);
-            const width_s = distScreen(p_s, p2_screen);
+            const width_w = {x: e.insertionPoint.x + e.width, y: e.insertionPoint.y};
+            const width_s_pt = worldToScreen(width_w);
+            const width_s = distScreen(p_s, width_s_pt);
             
             const lines = e.textString.split('\n');
             let currentY = 0;
@@ -2509,13 +2497,13 @@
                     if (metrics.width > width_s && n > 0) {
                         ctx.fillText(currentLine, 0, currentY);
                         currentLine = words[n] + ' ';
-                        currentY += screenPixelHeight * 1.2;
+                        currentY -= screenPixelHeight * 1.2;
                     } else {
                         currentLine = testLine;
                     }
                 }
                 ctx.fillText(currentLine, 0, currentY);
-                currentY += screenPixelHeight * 1.2;
+                currentY -= screenPixelHeight * 1.2;
             });
         } else {
             ctx.fillText(e.textString, 0, 0);
@@ -2556,7 +2544,7 @@
       ctx.globalAlpha = 1.0; 
 
       ctx.setLineDash([]);
-      const gripSize = 20;
+      const gripSize = 8;
 
       ctx.strokeStyle = '#00FF00';
       ctx.lineWidth = 1;
@@ -2598,6 +2586,15 @@
       if (name === 'line' && data.start) {
           const p1 = worldToScreen(data.start); const p2 = worldToScreen(currentPt);
           ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+      } else if (name === 'distance' && data.start) {
+          const p1 = worldToScreen(data.start); 
+          const p2 = worldToScreen(currentPt);
+          ctx.beginPath(); 
+          ctx.moveTo(p1.x, p1.y); 
+          ctx.lineTo(p2.x, p2.y); 
+          ctx.stroke();
+          const dist = Math.hypot(currentPt.x - data.start.x, currentPt.y - data.start.y);
+          showTooltip(`Distance: ${dist.toFixed(4)} ft`);
       } else if (name === 'polyline' && data.points.length > 0) {
           ctx.beginPath();
           const startScreenPt = worldToScreen(data.points[0]);
@@ -2621,21 +2618,18 @@
           ctx.beginPath();
           ctx.rect(p1_s.x, p1_s.y, p2_s.x - p1_s.x, p2_s.y - p1_s.y);
           ctx.stroke();
-          ctx.strokeStyle = '#FFFF00';
       } else if (name === 'mtext' && data.p1) {
           const p1_s = worldToScreen(data.p1);
           const p2_s = worldToScreen(currentPt);
           ctx.beginPath();
           ctx.rect(p1_s.x, p1_s.y, p2_s.x - p1_s.x, p2_s.y - p1_s.y);
           ctx.stroke();
-          ctx.strokeStyle = '#FFFF00';
       } else if (name === 'imagetext' && data.p1_screen) {
           const p1 = data.p1_screen;
           const p2 = worldToScreen(currentPt);
           ctx.beginPath();
           ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
           ctx.stroke();
-          ctx.strokeStyle = '#FFFF00';
       } else if (name === 'zoom' && data.p1) {
           const p1_s = worldToScreen(data.p1);
           const p2_s = worldToScreen(currentPt);
@@ -2649,16 +2643,14 @@
           ctx.rect(p1.x, p1.y, p2_s.x - p1.x, p2_s.y - p1.y);
           ctx.stroke();
       } else if (name === 'circle' && data.center) {
-          const radiusMeters = L.latLng(data.center.y, data.center.x).distanceTo(L.latLng(currentPt.y, currentPt.x));
+          const radiusInFeet = Math.hypot(currentPt.x - data.center.x, currentPt.y - data.center.y);
+          const center_s = worldToScreen(data.center);
+          const edge_w = {x: data.center.x + radiusInFeet, y: data.center.y};
+          const edge_s = worldToScreen(edge_w);
+          const radius_s = distScreen(center_s, edge_s);
           ctx.beginPath();
-          const segments = 64;
-          for (let i = 0; i <= segments; i++) {
-              const ptW = getDestinationPoint(data.center, radiusMeters, (i / segments) * 360);
-              const ptS = worldToScreen(ptW);
-              if (i === 0) ctx.moveTo(ptS.x, ptS.y); else ctx.lineTo(ptS.x, ptS.y);
-          }
+          ctx.arc(center_s.x, center_s.y, radius_s, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.strokeStyle = '#FFFF00';
       } else if ((name === 'move' || name === 'copy') && data.base) {
           const dx = currentPt.x - data.base.x; const dy = currentPt.y - data.base.y;
           const moveFunc = p => ({ x: p.x + dx, y: p.y + dy });
@@ -2716,7 +2708,7 @@
 
   function drawSnapMarker() {
       if(!state.snapPoint) return;
-      const markerSize = 20;
+      const markerSize = 12;
       const ptS = worldToScreen(state.snapPoint);
       ctx.strokeStyle = 'var(--osnap-marker)'; ctx.lineWidth = 2;
       ctx.beginPath();
@@ -2729,51 +2721,26 @@
 
   function drawCrosshairCursor() {
     if (state.mouse.isPanning) return;
-
-    // Get the current mouse coordinates
     const { x, y } = state.mouse;
+    const color = '#0000FF';
+    const pickboxSize = 15;
+    const crosshairLength = 105;
+    const gap = 3;
 
-    // --- CUSTOMIZE CURSOR APPEARANCE HERE ---
-    const color = '#0000FF'; // Cursor color (default is a light grey/white)
-    const pickboxSize = 15;      // The size of the small central square
-    const crosshairLength = 105; // The length of each of the 4 lines
-    const gap = 3;              // The empty space between the box and the lines
-
-    // Set the drawing style
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1; // Keep lines thin for precision
+    ctx.lineWidth = 1;
     ctx.setLineDash([]);
 
-    // --- Draw the AutoCAD-style cursor ---
-
-    // 1. Draw the central Pickbox (a hollow square)
-    // We use Math.floor and add 0.5 to get perfectly sharp 1-pixel lines.
-    ctx.strokeRect(
-        Math.floor(x - pickboxSize / 2) + 0.5, 
-        Math.floor(y - pickboxSize / 2) + 0.5, 
-        pickboxSize, 
-        pickboxSize
-    );
-
-    // 2. Draw the four crosshair lines around the pickbox
+    ctx.strokeRect( Math.floor(x - pickboxSize / 2) + 0.5,  Math.floor(y - pickboxSize / 2) + 0.5,  pickboxSize,  pickboxSize );
     ctx.beginPath();
-    
-    // Line to the right
     ctx.moveTo(Math.floor(x + pickboxSize / 2 + gap), Math.floor(y) + 0.5);
     ctx.lineTo(Math.floor(x + pickboxSize / 2 + gap + crosshairLength), Math.floor(y) + 0.5);
-
-    // Line to the left
     ctx.moveTo(Math.floor(x - pickboxSize / 2 - gap), Math.floor(y) + 0.5);
     ctx.lineTo(Math.floor(x - pickboxSize / 2 - gap - crosshairLength), Math.floor(y) + 0.5);
-
-    // Line going down
     ctx.moveTo(Math.floor(x) + 0.5, Math.floor(y + pickboxSize / 2 + gap));
     ctx.lineTo(Math.floor(x) + 0.5, Math.floor(y + pickboxSize / 2 + gap + crosshairLength));
-    
-    // Line going up
     ctx.moveTo(Math.floor(x) + 0.5, Math.floor(y - pickboxSize / 2 - gap));
     ctx.lineTo(Math.floor(x) + 0.5, Math.floor(y - pickboxSize / 2 - gap - crosshairLength));
-
     ctx.stroke();
   }
 
@@ -2808,10 +2775,16 @@
   const hitTest = (p) => {
     let best=null, bd = 8;
     const pS = worldToScreen(p);
-    for(const e of [...state.ents].reverse()){ // Reverse to pick top-most entities first
+    for(const e of [...state.ents].reverse()){
       let d = Infinity;
       if(e.type==='line') { const aS=worldToScreen(e.a), bS=worldToScreen(e.b); const l2=(bS.x-aS.x)**2+(bS.y-aS.y)**2; if (l2===0){ d=distScreen(pS, aS);} else {let t=((pS.x-aS.x)*(bS.x-aS.x)+(pS.y-aS.y)*(bS.y-aS.y))/l2; t=clamp(t,0,1); d = distScreen(pS, {x:aS.x+t*(bS.x-aS.x), y:aS.y+t*(bS.y-aS.y)});}}
-      else if(e.type==='circle') { const cS=worldToScreen(e.c); const ptOnCircW = getDestinationPoint(e.c, e.r, 0); const ptOnCircS = worldToScreen(ptOnCircW); const rS = distScreen(cS, ptOnCircS); d = Math.abs(distScreen(pS, cS) - rS); }
+      else if(e.type==='circle') {
+          const cS = worldToScreen(e.c);
+          const edgeW = { x: e.c.x + e.r, y: e.c.y };
+          const edgeS = worldToScreen(edgeW);
+          const rS = distScreen(cS, edgeS);
+          d = Math.abs(distScreen(pS, cS) - rS);
+      }
       else if(e.type==='polyline' && e.pts.length > 1) {
           for (let i = 0; i < e.pts.length - 1; i++) {
               const aS=worldToScreen(e.pts[i]), bS=worldToScreen(e.pts[i+1]); const l2=(bS.x-aS.x)**2+(bS.y-aS.y)**2; if(l2===0) continue; let t=((pS.x-aS.x)*(bS.x-aS.x)+(pS.y-aS.y)*(bS.y-aS.y))/l2; t=clamp(t,0,1); const current_d = distScreen(pS, {x:aS.x+t*(bS.x-aS.x), y:aS.y+t*(bS.y-aS.y)}); d = Math.min(d, current_d);
@@ -2876,7 +2849,8 @@
           } else { return ptsS.every(p => isPointInRect(p, r)); }
       } else if (ent.type === 'circle') {
           const cS = worldToScreen(ent.c);
-          const edgeW = getDestinationPoint(ent.c, ent.r, 0); const edgeS = worldToScreen(edgeW);
+          const edgeW = {x: ent.c.x + ent.r, y: ent.c.y};
+          const edgeS = worldToScreen(edgeW);
           const rS = distScreen(cS, edgeS);
           const ent_r = { x: cS.x - rS, y: cS.y - rS, w: 2 * rS, h: 2 * rS };
           if (isCrossing) { return !(r.x > ent_r.x + ent_r.w || r.x + r.w < ent_r.x || r.y > ent_r.y + ent_r.h || r.y + r.h < ent_r.y); }
@@ -2944,7 +2918,7 @@
       if (ent.type === 'polyline') return ent.pts;
       if (ent.type === 'text') return [ent.insertionPoint];
       if (ent.type === 'mtext') {
-          const p2 = getDestinationPoint(ent.insertionPoint, ent.width, 90);
+          const p2 = getDestinationPoint(ent.insertionPoint, ent.width, ent.rotation);
           return [ent.insertionPoint, p2];
       }
       if (ent.type === 'circle') {
@@ -3024,22 +2998,17 @@
       } else if (ent.type === 'text') {
           if (ptIndex === 0) ent.insertionPoint = newPt;
       } else if (ent.type === 'mtext') {
-          const p1 = ent.insertionPoint;
-          const p2 = getDestinationPoint(p1, ent.width, 90);
-          if(ptIndex === 0) { // Moving insertion point
+          if(ptIndex === 0) {
               ent.insertionPoint = newPt;
-              ent.width = L.latLng(newPt.y, newPt.x).distanceTo(L.latLng(p2.y, p2.x));
-          } else { // Adjusting width
-              ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
+          } else {
+              ent.width = Math.hypot(newPt.x - ent.insertionPoint.x, newPt.y - ent.insertionPoint.y);
+              ent.rotation = getBearing(ent.insertionPoint, newPt);
           }
-
       } else if (ent.type === 'circle') {
           if (ptIndex === 0) {
               ent.c = newPt;
           } else {
-              const centerLatLng = L.latLng(ent.c.y, ent.c.x);
-              const newPtLatLng = L.latLng(newPt.y, newPt.x);
-              ent.r = centerLatLng.distanceTo(newPtLatLng);
+              ent.r = Math.hypot(newPt.x - ent.c.x, newPt.y - ent.c.y);
           }
       }
   }
@@ -3263,7 +3232,7 @@
                ent.layer = value;
                break;
           case 'propTextColor':
-               if (!ent.props) ent.props = {}; // Ensure props object exists before setting a property on it
+               if (!ent.props) ent.props = {};
                ent.props.color = value;
                break;
       }
@@ -3326,7 +3295,6 @@
       snapshot(); draw();
   }
   function curProps() {
-      // Return a copy of the current properties state
       return { ...state.currentProperties };
   }
   function snapshot(){ const s=JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer}); if (state.history[state.history.length-1] !== s) { state.history.push(s); if(state.history.length>50)state.history.shift(); state.future=[]; } }
@@ -3386,11 +3354,8 @@
   function escapeXml(unsafe) {
     return unsafe.replace(/[<>&'"]/g, function (c) {
         switch (c) {
-            case '<': return '&lt;';
-            case '>': return '&gt;';
-            case '&': return '&amp;';
-            case '\'': return '&apos;';
-            case '"': return '&quot;';
+            case '<': return '&lt;'; case '>': return '&gt;'; case '&': return '&amp;';
+            case '\'': return '&apos;'; case '"': return '&quot;';
         }
     });
   }
@@ -3405,18 +3370,34 @@
           const layer = state.layers.find(l => l.name === ent.layer) || state.layers[0]; if (!layer.visible) return;
           const styleUrl = `#layer-${layer.name.replace(/\s/g, '_')}`;
 
+          const worldToLatLng = (p_ft) => {
+              const dLat = p_ft.y / feetPerDegree.lat;
+              const dLng = p_ft.x / feetPerDegree.lng;
+              return L.latLng(cadOrigin.lat + dLat, cadOrigin.lng + dLng);
+          };
+
           if (ent.type === 'line' || ent.type === 'polyline' || ent.type === 'circle') {
             kml += `<Placemark><styleUrl>${styleUrl}</styleUrl><LineString><coordinates>`;
-            if (ent.type === 'line') { kml += `${ent.a.x},${ent.a.y},0 ${ent.b.x},${ent.b.y},0`; }
-            else if (ent.type === 'polyline') { kml += ent.pts.map(p => `${p.x},${p.y},0`).join(' '); }
-            else if (ent.type === 'circle') {
+            let coordsStr = '';
+            if (ent.type === 'line') {
+                const a = worldToLatLng(ent.a); const b = worldToLatLng(ent.b);
+                coordsStr = `${a.lng},${a.lat},0 ${b.lng},${b.lat},0`;
+            } else if (ent.type === 'polyline') {
+                coordsStr = ent.pts.map(p => { const ll = worldToLatLng(p); return `${ll.lng},${ll.lat},0`; }).join(' ');
+            } else if (ent.type === 'circle') {
                 const segments = 64; let coords = '';
-                for (let i = 0; i <= segments; i++) { const angle = (i/segments)*360; const pt = getDestinationPoint(ent.c, ent.r, angle); coords += `${pt.x},${pt.y},0 `; }
-                kml += coords.trim();
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i/segments)*360;
+                    const pt = getDestinationPoint(ent.c, ent.r, angle);
+                    const ll = worldToLatLng(pt);
+                    coords += `${ll.lng},${ll.lat},0 `;
+                }
+                coordsStr = coords.trim();
             }
-            kml += `</coordinates></LineString></Placemark>`;
-          } else if (ent.type === 'text') {
-            kml += `<Placemark><name>${escapeXml(ent.textString)}</name><styleUrl>${styleUrl}</styleUrl><Point><coordinates>${ent.insertionPoint.x},${ent.insertionPoint.y},0</coordinates></Point></Placemark>`;
+            kml += coordsStr + `</coordinates></LineString></Placemark>`;
+          } else if (ent.type === 'text' || ent.type === 'mtext') {
+            const ll = worldToLatLng(ent.insertionPoint);
+            kml += `<Placemark><name>${escapeXml(ent.textString)}</name><styleUrl>${styleUrl}</styleUrl><Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point></Placemark>`;
           }
       });
       kml += `</Document></kml>`;
@@ -3428,135 +3409,65 @@
   }
 
   function exportToDxf() {
-    logToHistory("Exporting to DXF... (This version is designed for maximum compatibility with AutoCAD)");
+    logToHistory("Exporting to DXF... (Units = Feet)");
     
     class DxfWriter {
-        constructor() {
-            this.handleSeed = 100;
-            this.dxf = [];
-            this.handles = { layer: {}, block_record: {}, block: {} };
-        }
+        constructor() { this.handleSeed = 100; this.dxf = []; }
         add(code, value) { this.dxf.push(String(code), String(value)); }
         getHandle() { return (this.handleSeed++).toString(16).toUpperCase(); }
         toString() { return this.dxf.join('\n'); }
     }
 
     const dxf = new DxfWriter();
-
     const hexToAci = (hex) => {
-        const r = parseInt(hex.slice(1, 3), 16);
-        const g = parseInt(hex.slice(3, 5), 16);
-        const b = parseInt(hex.slice(5, 7), 16);
-        if (r > 200 && g > 200 && b > 200) return 7; // White
-        if (r > 200 && g < 100 && b < 100) return 1; // Red
-        if (g > 200 && r < 100 && b < 100) return 3; // Green
-        if (b > 200 && r < 100 && g < 100) return 5; // Blue
-        if (r > 200 && g > 200 && b < 100) return 2; // Yellow
-        return 7;
+        const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+        if (r > 200 && g > 200 && b > 200) return 7; if (r > 200 && g < 100 && b < 100) return 1;
+        if (g > 200 && r < 100 && b < 100) return 3; if (b > 200 && r < 100 && g < 100) return 5;
+        if (r > 200 && g > 200 && b < 100) return 2; return 7;
     };
 
-    // --- Header ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'HEADER');
-    dxf.add(9, '$ACADVER'); dxf.add(1, 'AC1014');
-    dxf.add(9, '$HANDSEED'); dxf.add(5, dxf.getHandle());
+    dxf.add(9, '$ACADVER'); dxf.add(1, 'AC1009');
+    dxf.add(9, '$INSUNITS'); dxf.add(70, 2); // 2 = Feet
     dxf.add(0, 'ENDSEC');
-
-    // --- Tables ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'TABLES');
-    
-    // VPORT Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'VPORT'); dxf.add(5, '2'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
-    dxf.add(0, 'VPORT'); dxf.add(5, '8'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbViewportTableRecord');
-    dxf.add(2, '*Active'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(11, 1); dxf.add(21, 1);
+    dxf.add(0, 'TABLE'); dxf.add(2, 'LTYPE');
+    dxf.add(0, 'LTYPE'); dxf.add(2, 'Continuous'); dxf.add(70, 64); dxf.add(3, 'Solid line'); dxf.add(72, 65); dxf.add(73, 0); dxf.add(40, 0.0);
     dxf.add(0, 'ENDTAB');
-
-    // LTYPE Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'LTYPE'); dxf.add(5, '5'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
-    dxf.add(0, 'LTYPE'); dxf.add(5, '10'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLinetypeTableRecord');
-    dxf.add(2, 'Continuous'); dxf.add(70, 0); dxf.add(3, 'Solid line'); dxf.add(72, 65); dxf.add(73, 0); dxf.add(40, 0.0);
-    dxf.add(0, 'ENDTAB');
-
-    // LAYER Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'LAYER'); dxf.add(5, '6'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, state.layers.length);
+    dxf.add(0, 'TABLE'); dxf.add(2, 'LAYER');
     state.layers.forEach(layer => {
-        const handle = dxf.getHandle();
-        dxf.handles.layer[layer.name] = handle;
-        dxf.add(0, 'LAYER'); dxf.add(5, handle); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLayerTableRecord');
-        dxf.add(2, layer.name); dxf.add(70, 0); dxf.add(62, hexToAci(layer.color)); dxf.add(6, 'Continuous');
+        dxf.add(0, 'LAYER'); dxf.add(2, layer.name); dxf.add(70, 0); dxf.add(62, hexToAci(layer.color)); dxf.add(6, 'Continuous');
     });
     dxf.add(0, 'ENDTAB');
-    
-    // STYLE Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'STYLE'); dxf.add(5, '3'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
-    dxf.add(0, 'STYLE'); dxf.add(5, '11'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbTextStyleTableRecord');
-    dxf.add(2, 'Standard'); dxf.add(70, 0); dxf.add(40, 0); dxf.add(41, 1); dxf.add(50, 0); dxf.add(71, 0); dxf.add(42, 0.2); dxf.add(3, 'arial.ttf');
-    dxf.add(0, 'ENDTAB');
-
-    // APPID Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'APPID'); dxf.add(5, '9'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
-    dxf.add(0, 'APPID'); dxf.add(5, '12'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbRegAppTableRecord');
-    dxf.add(2, 'ACAD'); dxf.add(70, 0);
-    dxf.add(0, 'ENDTAB');
-
-    // BLOCK_RECORD Table
-    dxf.add(0, 'TABLE'); dxf.add(2, 'BLOCK_RECORD'); dxf.add(5, '1'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 2);
-    dxf.handles.block_record['*Model_Space'] = dxf.getHandle();
-    dxf.add(0, 'BLOCK_RECORD'); dxf.add(5, dxf.handles.block_record['*Model_Space']); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbBlockTableRecord'); dxf.add(2, '*Model_Space');
-    dxf.handles.block_record['*Paper_Space'] = dxf.getHandle();
-    dxf.add(0, 'BLOCK_RECORD'); dxf.add(5, dxf.handles.block_record['*Paper_Space']); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbBlockTableRecord'); dxf.add(2, '*Paper_Space');
-    dxf.add(0, 'ENDTAB');
-
     dxf.add(0, 'ENDSEC');
-    
-    // --- BLOCKS Section ---
-    dxf.add(0, 'SECTION'); dxf.add(2, 'BLOCKS');
-    const modelSpaceBlockHandle = dxf.getHandle();
-    dxf.handles.block['*Model_Space'] = modelSpaceBlockHandle;
-    dxf.add(0, 'BLOCK'); dxf.add(5, modelSpaceBlockHandle); dxf.add(330, dxf.handles.block_record['*Model_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
-    dxf.add(100, 'AcDbBlockBegin'); dxf.add(2, '*Model_Space'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(30, 0); dxf.add(3, '*Model_Space'); dxf.add(1, '');
-    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(330, dxf.handles.block_record['*Model_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
-    
-    const paperSpaceBlockHandle = dxf.getHandle();
-    dxf.handles.block['*Paper_Space'] = paperSpaceBlockHandle;
-    dxf.add(0, 'BLOCK'); dxf.add(5, paperSpaceBlockHandle); dxf.add(330, dxf.handles.block_record['*Paper_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
-    dxf.add(100, 'AcDbBlockBegin'); dxf.add(2, '*Paper_Space'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(30, 0); dxf.add(3, '*Paper_Space'); dxf.add(1, '');
-    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(330, dxf.handles.block_record['*Paper_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
-    dxf.add(0, 'ENDSEC');
-
-    // --- ENTITIES Section ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'ENTITIES');
-    const ownerHandle = dxf.handles.block_record['*Model_Space'];
 
     state.ents.forEach(ent => {
         const layer = state.layers.find(l => l.name === ent.layer);
         if (!layer || !layer.visible) return;
 
         if (ent.type === 'line') {
-            dxf.add(0, 'LINE'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbLine');
+            dxf.add(0, 'LINE'); dxf.add(8, ent.layer);
             dxf.add(10, ent.a.x); dxf.add(20, ent.a.y); dxf.add(30, 0);
             dxf.add(11, ent.b.x); dxf.add(21, ent.b.y); dxf.add(31, 0);
         } else if (ent.type === 'polyline' && ent.pts.length > 1) {
-            dxf.add(0, 'LWPOLYLINE'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbPolyline');
-            dxf.add(90, ent.pts.length);
-            dxf.add(70, ent.closed ? 1 : 0);
+            dxf.add(0, 'LWPOLYLINE'); dxf.add(8, ent.layer);
+            dxf.add(100, 'AcDbEntity'); dxf.add(100, 'AcDbPolyline');
+            dxf.add(90, ent.pts.length); dxf.add(70, ent.closed ? 1 : 0);
             ent.pts.forEach(pt => { dxf.add(10, pt.x); dxf.add(20, pt.y); });
         } else if (ent.type === 'circle') {
-            const radiusInDegrees = ent.r / 111320.0;
-            dxf.add(0, 'CIRCLE'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbCircle');
+            dxf.add(0, 'CIRCLE'); dxf.add(8, ent.layer);
             dxf.add(10, ent.c.x); dxf.add(20, ent.c.y); dxf.add(30, 0);
-            dxf.add(40, radiusInDegrees);
+            dxf.add(40, ent.r);
         } else if (ent.type === 'text' || ent.type === 'mtext') {
-            dxf.add(0, 'TEXT'); dxf.add(5, dxf.getHandle()); dxf.add(330, ownerHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, ent.layer); dxf.add(100, 'AcDbText');
+            dxf.add(0, 'TEXT'); dxf.add(8, ent.layer);
             dxf.add(10, ent.insertionPoint.x); dxf.add(20, ent.insertionPoint.y); dxf.add(30, 0);
             dxf.add(40, ent.height);
             if (ent.rotation) dxf.add(50, ent.rotation);
             dxf.add(1, ent.textString);
-            dxf.add(7, 'Standard');
         }
     });
     dxf.add(0, 'ENDSEC');
-
-    // --- End of File ---
     dxf.add(0, 'EOF');
 
     const dxfString = dxf.toString();
