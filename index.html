@@ -186,6 +186,7 @@
             <div class="prop-group" id="propText" style="display: none;">
                 <div class="row"><label for="propTextType">Text</label><input type="text" id="propTextType" readonly></div>
                 <div class="row"><label for="propTextLayer">Layer</label><select id="propTextLayer"></select></div>
+                <div class="row"><label for="propTextColor">Color</label><input type="color" id="propTextColor"></div>
                 <div class="row"><label for="propTextContent">Contents</label><input type="text" id="propTextContent"></div>
                 <div class="row"><label for="propTextHeight">Height</label><input type="number" id="propTextHeight" value="0.0001" step="0.00001"></div>
                 <div class="row"><label for="propTextRotation">Rotation</label><input type="number" id="propTextRotation" value="0" step="1"></div>
@@ -315,6 +316,8 @@
         thickness: 0.0,
     },
     clipboard: { data: [], basePoint: null },
+    viewHistory: [], // <--- ADD THIS LINE
+    isZoomingProgrammatically: false // <--- AND ADD THIS LINE
   };
   let nextId = 1;
 
@@ -524,6 +527,7 @@
     'break': { alias: 'br', execute: startBreakCommand, prompt: "Select object to break:" },
     'lengthen': { alias: 'len', execute: startLengthenCommand, prompt: "Enter delta distance:" },
     'array': { alias: 'ar', execute: startArrayCommand, prompt: "Enter number of rows:" },
+    'zoom': { alias: 'z', execute: startZoomCommand, prompt: "Enter an option [Extents/Window/Previous/Object]:" }
   };
 
   function runCommand(cmdStr) {
@@ -1118,72 +1122,65 @@
               } else if (sourceEnt.type === 'line' || sourceEnt.type === 'polyline') {
                   const isClosed = sourceEnt.closed || false;
                   let pts_w = sourceEnt.type === 'line' ? [sourceEnt.a, sourceEnt.b] : [...sourceEnt.pts];
+                  if (isClosed && pts_w.length > 1 && pointsAreEqual(pts_w[0], pts_w[pts_w.length - 1])) {
+                      pts_w.pop();
+                  }
                   if (pts_w.length < 2) { cancelCommand(); return; }
 
-                  if (isClosed && pts_w.length > 2 && (pts_w[0].x === pts_w[pts_w.length-1].x && pts_w[0].y === pts_w[pts_w.length-1].y)) {
-                      pts_w.pop(); // Remove duplicate closing point for easier iteration
+                  // CORRECTED METER -> PIXEL CONVERSION
+                  const mapScale = leafletMap.getZoomScale(leafletMap.getZoom(), 0); // THE FIX IS HERE
+                  const metersPerPixel = 40075016.686 * Math.cos(leafletMap.getCenter().lat * Math.PI / 180) / (256 * mapScale);
+                  if (metersPerPixel < 1e-9) { logToHistory("Cannot calculate offset at this zoom level."); cancelCommand(); return; }
+                  const pixel_dist = cmd.data.distance / metersPerPixel;
+
+                  const pts_s = pts_w.map(worldToScreen);
+                  const sidePoint_s = worldToScreen(sidePoint);
+
+                  const cross_product = (pts_s[1].x - pts_s[0].x) * (sidePoint_s.y - pts_s[0].y) - (pts_s[1].y - pts_s[0].y) * (sidePoint_s.x - pts_s[0].x);
+                  const offset_sign = Math.sign(cross_product) || 1;
+
+                  const parallel_segments = [];
+                  for (let i = 0; i < (isClosed ? pts_s.length : pts_s.length - 1); i++) {
+                      const p1 = pts_s[i];
+                      const p2 = pts_s[(i + 1) % pts_s.length];
+                      const dx = p2.x - p1.x;
+                      const dy = p2.y - p1.y;
+                      const len = Math.hypot(dx, dy);
+                      if (len < 1e-6) continue;
+                      
+                      const normal_x = -dy / len;
+                      const normal_y = dx / len;
+                      
+                      parallel_segments.push([
+                          { x: p1.x + normal_x * pixel_dist * offset_sign, y: p1.y + normal_y * pixel_dist * offset_sign },
+                          { x: p2.x + normal_x * pixel_dist * offset_sign, y: p2.y + normal_y * pixel_dist * offset_sign }
+                      ]);
                   }
                   
-                  // 1. Determine side using a screen-space cross product
-                  const p1_s = worldToScreen(pts_w[0]);
-                  const p2_s = worldToScreen(pts_w[1]);
-                  const sidePoint_s = worldToScreen(sidePoint);
-                  const cross_product = (p2_s.x - p1_s.x) * (sidePoint_s.y - p1_s.y) - (p2_s.y - p1_s.y) * (sidePoint_s.x - p1_s.x);
-                  const offsetAngle = cross_product > 0 ? -90 : 90;
+                  if (parallel_segments.length === 0) { logToHistory("Could not offset object."); cancelCommand(); return; }
+                  
+                  const new_pts_s = [];
+                  if (!isClosed) { new_pts_s.push(parallel_segments[0][0]); }
 
-                  // 2. Create parallel offset segments in world coordinates
-                  const offsetSegments_w = [];
-                  for (let i = 0; i < pts_w.length; i++) {
-                      const p1 = pts_w[i];
-                      const p2 = pts_w[(i + 1) % pts_w.length]; 
-                      
-                      if (!isClosed && i === pts_w.length - 1) break;
-
-                      const segmentBearing = getBearing(p1, p2);
-                      const normalBearing = (segmentBearing + offsetAngle + 360) % 360;
-                      
-                      const new_p1 = getDestinationPoint(p1, cmd.data.distance, normalBearing);
-                      const new_p2 = getDestinationPoint(p2, cmd.data.distance, normalBearing);
-                      offsetSegments_w.push([new_p1, new_p2]);
+                  for (let i = 0; i < (isClosed ? parallel_segments.length : parallel_segments.length - 1); i++) {
+                      const seg1 = parallel_segments[i];
+                      const seg2 = parallel_segments[(i + 1) % parallel_segments.length];
+                      const intersection = intersectLineLineScreen(seg1[0], seg1[1], seg2[0], seg2[1], true);
+                      new_pts_s.push(intersection || seg1[1]);
+                  }
+                  
+                  if (!isClosed) {
+                      new_pts_s.push(parallel_segments[parallel_segments.length - 1][1]);
+                  } else if (new_pts_s.length > 0) {
+                      new_pts_s.push(new_pts_s[0]);
                   }
 
-                  if (offsetSegments_w.length > 0) {
-                      let finalPts_w;
-                      if (!isClosed) { // Open polyline or a single line segment
-                          const finalPts_s = [];
-                          finalPts_s.push(worldToScreen(offsetSegments_w[0][0]));
-                          for (let i = 0; i < offsetSegments_w.length - 1; i++) {
-                              const s1_s = offsetSegments_w[i].map(worldToScreen);
-                              const s2_s = offsetSegments_w[i+1].map(worldToScreen);
-                              const intersection = intersectLineLineScreen(s1_s[0], s1_s[1], s2_s[0], s2_s[1], true);
-                              finalPts_s.push(intersection || s1_s[1]);
-                          }
-                          finalPts_s.push(worldToScreen(offsetSegments_w[offsetSegments_w.length - 1][1]));
-                          finalPts_w = finalPts_s.map(screenToWorld);
-                      } else { // Closed polyline
-                          const finalPts_s = [];
-                          for (let i = 0; i < offsetSegments_w.length; i++) {
-                              const s1_w = offsetSegments_w[i];
-                              const s2_w = offsetSegments_w[(i + 1) % offsetSegments_w.length];
-                              const s1_s = s1_w.map(worldToScreen);
-                              const s2_s = s2_w.map(worldToScreen);
-                              const intersection = intersectLineLineScreen(s1_s[0], s1_s[1], s2_s[0], s2_s[1], true);
-                              finalPts_s.push(intersection || s1_s[1]);
-                          }
-                          finalPts_s.push(finalPts_s[0]); // Close the shape
-                          finalPts_w = finalPts_s.map(screenToWorld);
-                      }
-
-                      newEnt = { layer: sourceEnt.layer, props: { ...sourceEnt.props } };
-                      if (sourceEnt.type === 'line') {
-                          newEnt.type = 'line';
-                          newEnt.a = finalPts_w[0];
-                          newEnt.b = finalPts_w[1];
-                      } else {
-                          newEnt.type = 'polyline';
-                          newEnt.pts = finalPts_w;
-                          newEnt.closed = isClosed;
-                      }
+                  const finalPts_w = new_pts_s.map(screenToWorld);
+                  newEnt = { layer: sourceEnt.layer, props: { ...sourceEnt.props } };
+                  if (sourceEnt.type === 'line') {
+                      newEnt.type = 'line'; newEnt.a = finalPts_w[0]; newEnt.b = finalPts_w[1];
+                  } else {
+                      newEnt.type = 'polyline'; newEnt.pts = finalPts_w; newEnt.closed = isClosed;
                   }
               }
 
@@ -1196,7 +1193,7 @@
               logToHistory("Offset complete.");
               setPrompt("Select object to offset or press Enter to exit:");
               cmd.data.selectedEnt = null;
-              cmd.step = 1; // Go back to selecting another object
+              cmd.step = 1;
               draw();
           }
       };
@@ -1446,7 +1443,6 @@
           }
       };
   }
-
 
   function startTransformCommand(type) {
       if (state.selection.length === 0) {
@@ -1757,7 +1753,7 @@
       let joinCount = 0;
       chains.forEach(chain => {
           const firstEnt = selectedEnts[0];
-          if (chain.length > 0) { // Should always be true
+          if (chain.length > 0) { 
               const isClosed = pointsAreEqual(chain[0], chain[chain.length - 1]);
               
               pushEnt({ 
@@ -1848,6 +1844,134 @@
             }
         };
     }
+    function startZoomCommand() {
+      const cmd = state.activeCommand;
+      cmd.data = {}; // Reset data for this command instance
+
+      // This function processes the user's text input (E, W, P, etc.)
+      cmd.processInput = (input) => {
+          const option = input.trim().toLowerCase();
+          switch (option) {
+              case 'e':
+              case 'extents':
+                  zoomExtents();
+                  completeCommand();
+                  break;
+
+              case 'w':
+              case 'window':
+                  logToHistory("Zoom Window activated.");
+                  setPrompt("Specify first corner:");
+                  cmd.step = 1; // Move to the 'window' step
+                  break;
+
+              case 'p':
+              case 'previous':
+                  zoomPrevious();
+                  completeCommand();
+                  break;
+              
+              case 'o':
+              case 'object':
+                   if (state.selection.length === 0) {
+                       logToHistory("No objects selected. Please select objects before using Zoom Object.");
+                       completeCommand();
+                       return;
+                   }
+                   zoomExtents(state.selection); // Use the selection
+                   completeCommand();
+                   break;
+
+              default:
+                  logToHistory(`Unknown zoom option "${input}".`);
+                  cancelCommand();
+                  break;
+          }
+      };
+
+      // This function processes mouse clicks for Zoom Window
+      cmd.execute = () => {
+          if (cmd.step === 1) { // First corner for Zoom Window
+              const p1 = getPointInput();
+              if (p1) {
+                  cmd.data.p1 = p1;
+                  setPrompt("Specify opposite corner:");
+                  cmd.step = 2;
+              }
+          } else if (cmd.step === 2) { // Second corner for Zoom Window
+              const p2 = getPointInput();
+              if (p2) {
+                  const bounds = L.latLngBounds(L.latLng(p1.y, p1.x), L.latLng(p2.y, p2.x));
+                  if (bounds.isValid()) {
+                      saveCurrentView(); // Save the view before zooming
+                      state.isZoomingProgrammatically = true;
+                      leafletMap.fitBounds(bounds);
+                  }
+                  completeCommand();
+              }
+          }
+      };
+  }
+  function zoomExtents(idList = null) {
+      const targetEnts = idList ? idList.map(id => state.ents.find(e => e.id === id)).filter(Boolean) : state.ents;
+
+      if (targetEnts.length === 0) {
+          logToHistory("No objects to zoom to.");
+          return;
+      }
+
+      let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+
+      targetEnts.forEach(ent => {
+          const grips = getGripsForEnt(ent);
+          grips.forEach(pt => {
+              minLat = Math.min(minLat, pt.y);
+              maxLat = Math.max(maxLat, pt.y);
+              minLng = Math.min(minLng, pt.x);
+              maxLng = Math.max(maxLng, pt.x);
+          });
+      });
+      
+      const bounds = L.latLngBounds(L.latLng(minLat, minLng), L.latLng(maxLat, maxLng));
+
+      if (bounds.isValid()) {
+          saveCurrentView();
+          state.isZoomingProgrammatically = true;
+          leafletMap.fitBounds(bounds, { padding: [20, 20] }); // Add some padding
+      }
+  }
+
+  function zoomPrevious() {
+      if (state.viewHistory.length < 1) {
+          logToHistory("No previous view to restore.");
+          return;
+      }
+      const previousView = state.viewHistory.pop();
+      state.isZoomingProgrammatically = true;
+      leafletMap.setView(previousView.center, previousView.zoom);
+      logToHistory("Zoomed to previous view.");
+  }
+
+  // This function saves the current map view to our history stack
+  function saveCurrentView() {
+      if (state.isZoomingProgrammatically) {
+        state.isZoomingProgrammatically = false; // Reset the flag and do not save this view
+        return;
+      }
+
+      const currentView = {
+          center: leafletMap.getCenter(),
+          zoom: leafletMap.getZoom()
+      };
+      // To prevent spamming history, only add if it's different from the last one
+      const lastView = state.viewHistory[state.viewHistory.length - 1];
+      if (!lastView || !lastView.center.equals(currentView.center) || lastView.zoom !== currentView.zoom) {
+          state.viewHistory.push(currentView);
+          if (state.viewHistory.length > 20) { // Keep history from getting too large
+              state.viewHistory.shift();
+          }
+      }
+  }
 
     function performArray(data) {
         const { rows, cols, rowSpacing, colSpacing } = data;
@@ -2006,13 +2130,26 @@
         const text = document.getElementById('mtextInput').value;
         modal.style.display = 'none';
 
-        if(state.activeCommand && state.activeCommand.name === 'mtext') {
+        if (state.activeCommand && state.activeCommand.name === 'mtext') {
             const { p1, p2 } = state.activeCommand.data;
+
+            // 1. The rotation IS the angle of the line drawn by the user.
+            const rotation = getBearing(p1, p2);
+
+            // 2. The width IS the direct distance between the two points.
+            // This is the most intuitive result from what the user draws.
+            const width_m = L.latLng(p1.y, p1.x).distanceTo(L.latLng(p2.y, p2.x));
+
+            // 3. Set a reasonable default height for the text characters.
+            // A dynamic height based on the drawn box is complex and can be added later.
+            // This focuses on fixing the main rotation/width issue.
+            const text_height = 0.0001; 
+
             pushEnt({
                 type: 'mtext',
                 insertionPoint: p1,
-                width: L.latLng(p1.y, p1.x).distanceTo(L.latLng(p1.y, p2.x)), // width in meters
-                height: 0.0001, // Default world height
+                width: width_m,
+                height: text_height,
                 rotation: 0,
                 textString: text,
                 layer: state.currentLayer,
@@ -2031,6 +2168,8 @@
         if(state.activeCommand && state.activeCommand.name === 'mtext') cancelCommand();
         state.editingEnt = null;
     };
+    leafletMap.on('zoomend', saveCurrentView);
+    leafletMap.on('moveend', saveCurrentView);
 
   }
 
@@ -2242,7 +2381,8 @@
   }
 
   function onKeyDown(e) {
-    if (document.activeElement.tagName === 'INPUT' && document.activeElement !== cmdInput) return;
+  const activeEl = document.activeElement;
+  if (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') return;
     if (e.key === 'Escape') {
       hideContextMenu();
       if (state.activeGrip) { cancelGripEdit(); }
@@ -2278,8 +2418,8 @@
         
         const effectiveProps = {
             color: (e.props && e.props.color && e.props.color !== 'ByLayer') ? e.props.color : layer.color,
-            linetype: (e.props && e.props.linetype && e.props.linetype !== 'ByLayer') ? e.props.linetype : 'Continuous', // Assuming layer linetype is continuous
-            lineweight: (e.props && e.props.lineweight && e.props.lineweight !== 'ByLayer') ? e.props.lineweight : 'Default', // Assuming layer lineweight is default
+            linetype: (e.props && e.props.linetype && e.props.linetype !== 'ByLayer') ? e.props.linetype : 'Continuous',
+            lineweight: (e.props && e.props.lineweight && e.props.lineweight !== 'ByLayer') ? e.props.lineweight : 'Default',
             linetypeScale: (e.props && e.props.linetypeScale) ? e.props.linetypeScale : 1.0,
             transparency: (e.props && e.props.transparency) ? e.props.transparency : 0,
         };
@@ -2354,9 +2494,9 @@
         ctx.rotate((e.rotation || 0) * Math.PI / 180);
         
         if (e.type === 'mtext') {
-            const p2 = getDestinationPoint(e.insertionPoint, e.width, 90);
-            const p2_s = worldToScreen(p2);
-            const width_s = distScreen(p_s, p2_s);
+            const p2_world = getDestinationPoint(e.insertionPoint, e.width, 90);
+            const p2_screen = worldToScreen(p2_world);
+            const width_s = distScreen(p_s, p2_screen);
             
             const lines = e.textString.split('\n');
             let currentY = 0;
@@ -2451,7 +2591,7 @@
       const { name, data } = state.activeCommand;
       const currentPt = getPointInput();
 
-      ctx.strokeStyle = '#cccccc';
+      ctx.strokeStyle = '#FFFF00';
       ctx.lineWidth = 1;
       ctx.setLineDash([]);
 
@@ -2472,20 +2612,35 @@
             ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
       }
 
-      ctx.strokeStyle = '#999';
+      ctx.strokeStyle = '#FFFF00';
       ctx.setLineDash([5, 5]);
 
-      if ((name === 'rect' || name === 'mtext') && data.p1) {
+      if (name === 'rect' && data.start) {
+          const p1_s = worldToScreen(data.start);
+          const p2_s = worldToScreen(currentPt);
+          ctx.beginPath();
+          ctx.rect(p1_s.x, p1_s.y, p2_s.x - p1_s.x, p2_s.y - p1_s.y);
+          ctx.stroke();
+          ctx.strokeStyle = '#FFFF00';
+      } else if (name === 'mtext' && data.p1) {
           const p1_s = worldToScreen(data.p1);
           const p2_s = worldToScreen(currentPt);
           ctx.beginPath();
           ctx.rect(p1_s.x, p1_s.y, p2_s.x - p1_s.x, p2_s.y - p1_s.y);
           ctx.stroke();
+          ctx.strokeStyle = '#FFFF00';
       } else if (name === 'imagetext' && data.p1_screen) {
           const p1 = data.p1_screen;
           const p2 = worldToScreen(currentPt);
           ctx.beginPath();
           ctx.rect(p1.x, p1.y, p2.x - p1.x, p2.y - p1.y);
+          ctx.stroke();
+          ctx.strokeStyle = '#FFFF00';
+      } else if (name === 'zoom' && data.p1) {
+          const p1_s = worldToScreen(data.p1);
+          const p2_s = worldToScreen(currentPt);
+          ctx.beginPath();
+          ctx.rect(p1_s.x, p1_s.y, p2_s.x - p1_s.x, p2_s.y - p1_s.y);
           ctx.stroke();
       } else if (name === 'maptocad' && data.p1_screen) {
           const p1 = data.p1_screen;
@@ -2503,6 +2658,7 @@
               if (i === 0) ctx.moveTo(ptS.x, ptS.y); else ctx.lineTo(ptS.x, ptS.y);
           }
           ctx.stroke();
+          ctx.strokeStyle = '#FFFF00';
       } else if ((name === 'move' || name === 'copy') && data.base) {
           const dx = currentPt.x - data.base.x; const dy = currentPt.y - data.base.y;
           const moveFunc = p => ({ x: p.x + dx, y: p.y + dy });
@@ -2510,7 +2666,7 @@
               const ent = state.ents.find(e => e.id === id); if (!ent) continue;
               const previewEnt = JSON.parse(JSON.stringify(ent));
               transformPoints(previewEnt, moveFunc);
-              drawEnt(previewEnt, { color: '#999', lineweight: 'Default', linetype: 'Continuous', transparency: 0 }, false);
+              drawEnt(previewEnt, { color: '#FFFF00', lineweight: 'Default', linetype: 'Continuous', transparency: 0 }, false);
           }
       } else if (name === 'paste' && state.clipboard.basePoint) {
            const { data: clipboardEnts, basePoint } = state.clipboard;
@@ -3053,7 +3209,11 @@
               document.getElementById('propTextHeight').value = ent.height;
               document.getElementById('propTextRotation').value = ent.rotation || 0;
               document.getElementById('propTextLayer').value = ent.layer;
-              document.getElementById('propTextContent').disabled = (ent.type === 'mtext');
+              const layer = state.layers.find(l => l.name === ent.layer);
+              const effectiveColor = (ent.props && ent.props.color && ent.props.color !== 'ByLayer')
+                  ? ent.props.color
+                  : (layer ? layer.color : '#e6e9ef');
+              document.getElementById('propTextColor').value = effectiveColor;            
               return;
           }
       }
@@ -3101,6 +3261,10 @@
               break;
           case 'propTextLayer':
                ent.layer = value;
+               break;
+          case 'propTextColor':
+               if (!ent.props) ent.props = {}; // Ensure props object exists before setting a property on it
+               ent.props.color = value;
                break;
       }
       snapshot();
@@ -3270,11 +3434,7 @@
         constructor() {
             this.handleSeed = 100;
             this.dxf = [];
-            this.handles = {
-                layer: {},
-                block_record: {},
-                block: {}
-            };
+            this.handles = { layer: {}, block_record: {}, block: {} };
         }
         add(code, value) { this.dxf.push(String(code), String(value)); }
         getHandle() { return (this.handleSeed++).toString(16).toUpperCase(); }
@@ -3295,21 +3455,29 @@
         return 7;
     };
 
-    // --- SECTION: Header ---
+    // --- Header ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'HEADER');
     dxf.add(9, '$ACADVER'); dxf.add(1, 'AC1014');
     dxf.add(9, '$HANDSEED'); dxf.add(5, dxf.getHandle());
     dxf.add(0, 'ENDSEC');
 
-    // --- SECTION: Tables ---
+    // --- Tables ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'TABLES');
     
+    // VPORT Table
+    dxf.add(0, 'TABLE'); dxf.add(2, 'VPORT'); dxf.add(5, '2'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
+    dxf.add(0, 'VPORT'); dxf.add(5, '8'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbViewportTableRecord');
+    dxf.add(2, '*Active'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(11, 1); dxf.add(21, 1);
+    dxf.add(0, 'ENDTAB');
+
+    // LTYPE Table
     dxf.add(0, 'TABLE'); dxf.add(2, 'LTYPE'); dxf.add(5, '5'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
     dxf.add(0, 'LTYPE'); dxf.add(5, '10'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbLinetypeTableRecord');
     dxf.add(2, 'Continuous'); dxf.add(70, 0); dxf.add(3, 'Solid line'); dxf.add(72, 65); dxf.add(73, 0); dxf.add(40, 0.0);
     dxf.add(0, 'ENDTAB');
 
-    dxf.add(0, 'TABLE'); dxf.add(2, 'LAYER'); dxf.add(5, '2'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, state.layers.length);
+    // LAYER Table
+    dxf.add(0, 'TABLE'); dxf.add(2, 'LAYER'); dxf.add(5, '6'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, state.layers.length);
     state.layers.forEach(layer => {
         const handle = dxf.getHandle();
         dxf.handles.layer[layer.name] = handle;
@@ -3318,16 +3486,19 @@
     });
     dxf.add(0, 'ENDTAB');
     
+    // STYLE Table
     dxf.add(0, 'TABLE'); dxf.add(2, 'STYLE'); dxf.add(5, '3'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
     dxf.add(0, 'STYLE'); dxf.add(5, '11'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbTextStyleTableRecord');
     dxf.add(2, 'Standard'); dxf.add(70, 0); dxf.add(40, 0); dxf.add(41, 1); dxf.add(50, 0); dxf.add(71, 0); dxf.add(42, 0.2); dxf.add(3, 'arial.ttf');
     dxf.add(0, 'ENDTAB');
 
+    // APPID Table
     dxf.add(0, 'TABLE'); dxf.add(2, 'APPID'); dxf.add(5, '9'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 1);
     dxf.add(0, 'APPID'); dxf.add(5, '12'); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbRegAppTableRecord');
     dxf.add(2, 'ACAD'); dxf.add(70, 0);
     dxf.add(0, 'ENDTAB');
 
+    // BLOCK_RECORD Table
     dxf.add(0, 'TABLE'); dxf.add(2, 'BLOCK_RECORD'); dxf.add(5, '1'); dxf.add(100, 'AcDbSymbolTable'); dxf.add(70, 2);
     dxf.handles.block_record['*Model_Space'] = dxf.getHandle();
     dxf.add(0, 'BLOCK_RECORD'); dxf.add(5, dxf.handles.block_record['*Model_Space']); dxf.add(100, 'AcDbSymbolTableRecord'); dxf.add(100, 'AcDbBlockTableRecord'); dxf.add(2, '*Model_Space');
@@ -3337,22 +3508,22 @@
 
     dxf.add(0, 'ENDSEC');
     
-    // --- SECTION: BLOCKS ---
+    // --- BLOCKS Section ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'BLOCKS');
     const modelSpaceBlockHandle = dxf.getHandle();
     dxf.handles.block['*Model_Space'] = modelSpaceBlockHandle;
-    dxf.add(0, 'BLOCK'); dxf.add(5, modelSpaceBlockHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
+    dxf.add(0, 'BLOCK'); dxf.add(5, modelSpaceBlockHandle); dxf.add(330, dxf.handles.block_record['*Model_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
     dxf.add(100, 'AcDbBlockBegin'); dxf.add(2, '*Model_Space'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(30, 0); dxf.add(3, '*Model_Space'); dxf.add(1, '');
-    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
-
+    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(330, dxf.handles.block_record['*Model_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
+    
     const paperSpaceBlockHandle = dxf.getHandle();
     dxf.handles.block['*Paper_Space'] = paperSpaceBlockHandle;
-    dxf.add(0, 'BLOCK'); dxf.add(5, paperSpaceBlockHandle); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
+    dxf.add(0, 'BLOCK'); dxf.add(5, paperSpaceBlockHandle); dxf.add(330, dxf.handles.block_record['*Paper_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0');
     dxf.add(100, 'AcDbBlockBegin'); dxf.add(2, '*Paper_Space'); dxf.add(70, 0); dxf.add(10, 0); dxf.add(20, 0); dxf.add(30, 0); dxf.add(3, '*Paper_Space'); dxf.add(1, '');
-    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
+    dxf.add(0, 'ENDBLK'); dxf.add(5, dxf.getHandle()); dxf.add(330, dxf.handles.block_record['*Paper_Space']); dxf.add(100, 'AcDbEntity'); dxf.add(8, '0'); dxf.add(100, 'AcDbBlockEnd');
     dxf.add(0, 'ENDSEC');
 
-    // --- SECTION: Entities ---
+    // --- ENTITIES Section ---
     dxf.add(0, 'SECTION'); dxf.add(2, 'ENTITIES');
     const ownerHandle = dxf.handles.block_record['*Model_Space'];
 
