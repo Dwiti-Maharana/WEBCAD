@@ -26,7 +26,22 @@
   html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial; overflow: hidden;}
   .app{display:grid;grid-template-rows:auto 1fr 22px;grid-template-columns:260px 1fr;grid-template-areas:"toolbar toolbar" "sidebar canvas" "status status";height:100%}
   .toolbar{grid-area:toolbar;display:flex;flex-wrap: wrap;gap:8px;align-items:center;padding:6px 8px;background:linear-gradient(180deg,var(--panel),#282f3a);border-bottom:1px solid #1a1f26;position:sticky;top:0;z-index:15}
-  .toolbar button,.toolbar .toggle{border:1px solid #4a5766;background:var(--panel2);color:var(--text);padding:6px 10px;border-radius:10px;cursor:pointer}
+  .toolbar button,.toolbar .toggle {
+  border:1px solid #4a5766;
+  background:var(--panel2);
+  color:var(--text);
+  border-radius:10px;
+  cursor:pointer; 
+  font-size: 1em; 
+  width: 30px; 
+  height: 30px; /* Make the button a perfect square */
+  padding: 0; /* Remove padding, as flexbox will handle alignment */
+
+  /* --- Add these 3 lines for perfect centering --- */
+  display: flex;
+  align-items: center; /* This centers the icon vertically */
+  justify-content: center; /* This centers the icon horizontally */
+}
   .toolbar button.active{outline:2px solid var(--accent);}
   .toolbar button:hover{background:#4e5a6e;}
   .sidebar{grid-area:sidebar;display:flex;flex-direction:column;gap:10px;padding:10px;background:var(--panel);border-right:1px solid #1a1f26;overflow:auto}
@@ -41,6 +56,8 @@
   #layers .layer-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
   #layers .layer-row span { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
   #layers .layer-row input[type=checkbox] { width: 16px; height: 16px; }
+  #addLayerBtn { font-size: o.5em; padding: 3px 5px; }
+
 
   /* Modelspace Area */
   .canvas-wrap{grid-area:canvas;position:relative;background:var(--bg);overflow:hidden; cursor: none;}
@@ -112,61 +129,74 @@
       resize: vertical;
   }
 
+  /* Download Manager Styles */
+  .download-options { display: flex; flex-direction: column; gap: 12px; }
+  .download-options hr { width: 100%; border-color: #4a5766; border-style: solid; border-top: 0;}
+  .download-row { display: flex; align-items: center; justify-content: space-between; font-size: 14px; gap: 15px;}
+  .download-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; flex: 1;}
+  .download-row select { background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px; flex: 1; }
+  .dl-coord-system { font-size: 12px; color: var(--muted); border: 1px solid #4a5766; padding: 4px 8px; border-radius: 8px; }
+  .dl-coord-system button { background: none; border: none; color: var(--muted); cursor: pointer; }
+  .download-row.data-section { color: var(--muted); justify-content: flex-start; margin-top: 10px; margin-bottom: -5px; }
+
+
 </style>
 </head>
 <body>
   <div class="app">
     <div class="toolbar" id="toolbar">
        <!-- Drawing Commands -->
-      <button data-command="line" title="Line (L)">Line</button>
-      <button data-command="polyline" title="Polyline (PL)">Polyline</button>
-      <button data-command="circle" title="Circle (C)">Circle</button>
-      <button data-command="rect" title="Rectangle (REC)">Rect</button>
-      <button data-command="text" title="Text (T)">Text</button>
-      <button data-command="mtext" title="Multiline Text (MT)">Mtext</button>
-      <div class="sep"></div>
-       <!-- Modify Commands -->
-      <button data-command="erase" title="Erase (E)">Erase</button>
-      <button data-command="move" title="Move (M)">Move</button>
-      <button data-command="copy" title="Copy (CO)">Copy</button>
-      <button data-command="rotate" title="Rotate (RO)">Rotate</button>
-      <button data-command="scale" title="Scale (SC)">Scale</button>
-      <button data-command="stretch" title="Stretch (S)">Stretch</button>
-      <button data-command="mirror" title="Mirror (MI)">Mirror</button>
-      <button data-command="offset" title="Offset (O)">Offset</button>
-      <button data-command="array" title="Array (AR)">Array</button>
-      <div class="sep"></div>
-      <!-- Advanced Modify -->
-      <button data-command="trim" title="Trim (TR)">Trim</button>
-      <button data-command="extend" title="Extend (EX)">Extend</button>
-      <button data-command="break" title="Break (BR)">Break</button>
-      <button data-command="join" title="Join (J)">Join</button>
-      <button data-command="fillet" title="Fillet (F)">Fillet</button>
-      <button data-command="chamfer" title="Chamfer (CHA)">Chamfer</button>
-      <button data-command="lengthen" title="Lengthen (LEN)">Lengthen</button>
-      <button data-command="explode" title="Explode (X)">Explode</button>
-      <button data-command="matchprop" title="Match Properties (MA)">Matchprop</button>
-      <div class="sep"></div>
-       <!-- Inquiry & Utility -->
-      <button data-command="distance" title="Distance (DI)">Distance</button>
-      <button data-command="getaddress" title="Get Address (ADDR)">Get Address</button>
-      <button data-command="imagetext" title="Image Text (IT)">Image Text</button>
-      <button data-command="maptocad" title="Map to CAD (MTC)">Map to CAD</button>
-      <div class="sep"></div>
-      <button id="toggleMapBtn" title="Show Satellite Map">Show Satellite</button>
+      <button id="toggleMapBtn" title="Show Satellite Map">🛰️</button>
       <div class="sep"></div>
       <input type="text" id="searchCoordsInput" placeholder="Search for a location..." style="background:#1e252e;color:var(--text);border:1px solid #4a5766;border-radius:8px;padding:6px;width:220px;">
-      <button id="searchCoordsBtn">Search</button>
+      <button id="searchCoordsBtn">🔎</button>
       <div class="sep"></div>
-      <button id="undoBtn" title="Undo (Ctrl+Z)">Undo</button>
-      <button id="redoBtn" title="Redo (Ctrl+Y)">Redo</button>
+      <button data-command="line" title="Line (L)">—</button>
+      <button data-command="polyline" title="Polyline (PL)">〰️</button>
+      <button data-command="circle" title="Circle (C)">⚪</button>
+      <button data-command="rect" title="Rectangle (REC)">⬜</button>
+      <button data-command="text" title="Text (T)">🇹</button>
+      <button data-command="mtext" title="Multiline Text (MT)">📄</button>
+      <div class="sep"></div>
+       <!-- Modify Commands -->
+      <button data-command="erase" title="Erase (E)">🗑️</button>
+      <button data-command="move" title="Move (M)">✥</button>
+      <button data-command="copy" title="Copy (CO)">📋</button>
+      <button data-command="rotate" title="Rotate (RO)">🔄</button>
+      <button data-command="scale" title="Scale (SC)">⚖️</button>
+      <button data-command="stretch" title="Stretch (S)">⭤</button>
+      <button data-command="mirror" title="Mirror (MI)">🦋</button>
+      <button data-command="offset" title="Offset (O)">‖</button>
+      <button data-command="array" title="Array (AR)">▦</button>
+      <div class="sep"></div>
+      <!-- Advanced Modify -->
+      <button data-command="trim" title="Trim (TR)">✂️</button>
+      <button data-command="extend" title="Extend (EX)">↦</button>
+      <button data-command="break" title="Break (BR)">⨰</button>
+      <button data-command="join" title="Join (J)">🔗</button>
+      <button data-command="fillet" title="Fillet (F)">⌒</button>
+      <button data-command="chamfer" title="Chamfer (CHA)">📐</button>
+      <button data-command="lengthen" title="Lengthen (LEN)">↔️</button>
+      <button data-command="explode" title="Explode (X)">💥</button>
+      <button data-command="matchprop" title="Match Properties (MA)">🖌️</button>
+      <div class="sep"></div>
+       <!-- Inquiry & Utility -->
+      <button data-command="distance" title="Distance (DI)">📏</button>
+      <button data-command="getaddress" title="Get Address (ADDR)">📍</button>
+      <button data-command="imagetext" title="Image Text (IT)">🔤</button>
+      <button data-command="maptocad" title="Map to CAD (MTC)">🗺️</button>
+      <div class="sep"></div>
+      
+      <button id="undoBtn" title="Undo (Ctrl+Z)">↩️</button>
+      <button id="redoBtn" title="Redo (Ctrl+Y)">↪️</button>
        <div class="sep"></div>
-      <button id="saveBtn" title="Save Drawing (JSON)">Save</button>
-      <button id="openBtn" title="Open Drawing (JSON)">Open</button>
+      <button id="saveBtn" title="Save Drawing (JSON)">💾</button>
+      <button id="openBtn" title="Open Drawing (JSON)">📂</button>
       <input type="file" id="fileInput" accept=".json" style="display: none;" />
       <div class="sep"></div>
-      <button id="exportKmzBtn" title="Export as KMZ">Export KMZ</button>
-      <button id="exportDxfBtn" title="Export as DXF (for AutoCAD)">Export DXF</button>
+      <button id="exportKmzBtn" title="Export as KMZ">🌐</button>
+      <button id="exportDxfBtn" title="Export as DXF (for AutoCAD)">🏗️</button>
+      <button id="downloadManagerBtn" title="Open Download Manager">⬇️</button>
     </div>
 
     <div class="sidebar">
@@ -198,7 +228,7 @@
       <div class="card">
         <h3>Layers</h3>
         <div id="layers"></div>
-        <div class="row"><input id="newLayerName" placeholder="New layer name" /> <button id="addLayerBtn">Add</button></div>
+        <div class="row"><input id="newLayerName" placeholder="New layer name" /> <button id="addLayerBtn">➕</button></div>
       </div>
     </div>
 
@@ -264,6 +294,48 @@
           </div>
       </div>
   </div>
+
+  <div id="downloadManagerModal" class="modal-backdrop">
+    <div class="modal-content" style="width: 500px;">
+        <h3><span style="display:inline-block; transform: rotate(90deg);">&#x2913;</span> DOWNLOAD MANAGER</h3>
+        <div class="download-options">
+            <div class="download-row">
+                <label><input type="checkbox" id="dl-gis" checked> GIS Shapefile</label>
+                <label><input type="checkbox" id="dl-split" checked> Split by Type</label>
+                <div class="dl-coord-system">Latitude / Longitude (WGS 84) <button>&times;</button></div>
+            </div>
+            <div class="download-row">
+                <label><input type="checkbox" id="dl-kmz"> Google Earth KMZ</label>
+            </div>
+            <div class="download-row">
+                <label><input type="checkbox" id="dl-dxf"> AutoCAD DXF</label>
+            </div>
+            <div class="download-row">
+                <label><input type="checkbox" id="dl-geojson"> GeoJSON</label>
+            </div>
+             <hr>
+             <div class="download-row data-section">
+                <strong>DATA</strong>
+             </div>
+             <div class="download-row">
+                <label for="dl-spreadsheet">Spreadsheet Exports:</label>
+                <select id="dl-spreadsheet" disabled><option>Select an Export</option></select>
+             </div>
+             <div class="download-row">
+                <label for="dl-pdf">PDF Form Exports:</label>
+                <select id="dl-pdf" disabled><option>Select an Export</option></select>
+             </div>
+             <div class="download-row">
+                <label><input type="checkbox" id="dl-jobjson"> Job JSON</label>
+             </div>
+        </div>
+        <div class="row" style="justify-content: flex-end; gap: 12px; margin-top: 20px;">
+            <button id="cancelDownloadBtn">Cancel</button>
+            <button id="filterDownloadBtn">Filter And Download</button>
+        </div>
+    </div>
+  </div>
+
 
 <script>
 (() => {
@@ -2065,8 +2137,8 @@
         }
     });
 
-    document.getElementById('exportKmzBtn').onclick = exportToKmz;
-    document.getElementById('exportDxfBtn').onclick = exportToDxf;
+    document.getElementById('exportKmzBtn').onclick = () => exportToKmz(state.ents);
+    document.getElementById('exportDxfBtn').onclick = () => exportToDxf(state.ents);
     document.getElementById('saveBtn').onclick = saveDrawing;
     document.getElementById('openBtn').onclick = () => fileInput.click();
     fileInput.addEventListener('change', openDrawing);
@@ -2152,6 +2224,15 @@
     };
     leafletMap.on('zoomend', saveCurrentView);
     leafletMap.on('moveend', saveCurrentView);
+
+    // Download Manager Handlers
+    document.getElementById('downloadManagerBtn').onclick = () => {
+        document.getElementById('downloadManagerModal').style.display = 'flex';
+    };
+    document.getElementById('cancelDownloadBtn').onclick = () => {
+        document.getElementById('downloadManagerModal').style.display = 'none';
+    };
+    document.getElementById('filterDownloadBtn').onclick = startDownloadManagerExport;
 
   }
 
@@ -2998,12 +3079,14 @@
       } else if (ent.type === 'text') {
           if (ptIndex === 0) ent.insertionPoint = newPt;
       } else if (ent.type === 'mtext') {
-          if(ptIndex === 0) {
-              ent.insertionPoint = newPt;
-          } else {
-              ent.width = Math.hypot(newPt.x - ent.insertionPoint.x, newPt.y - ent.insertionPoint.y);
-              ent.rotation = getBearing(ent.insertionPoint, newPt);
-          }
+const p1 = ent.insertionPoint;
+const p2 = getDestinationPoint(p1, ent.width, 90);
+if(ptIndex === 0) { // Moving insertion point
+ent.insertionPoint = newPt;
+ent.width = L.latLng(newPt.y, newPt.x).distanceTo(L.latLng(p2.y, p2.x));
+} else { // Adjusting width
+ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
+}
       } else if (ent.type === 'circle') {
           if (ptIndex === 0) {
               ent.c = newPt;
@@ -3108,6 +3191,7 @@
   }
 
   function toggleState(mode) { state[mode] = !state[mode]; logToHistory(`${mode.toUpperCase()} <${state[mode] ? 'ON' : 'OFF'}>`); updateStatusBar(); draw(); }
+  
   function toggleMap() {
       mapState = (mapState + 1) % 3; // Cycle through 0, 1, 2
       
@@ -3120,7 +3204,7 @@
           case 0: // Off
               canvas.style.backgroundColor = 'var(--bg)';
               canvasWrap.style.background = 'var(--bg)';
-              toggleBtn.textContent = 'Show Satellite';
+              toggleBtn.textContent = '🛰️';
               toggleBtn.title = 'Show Satellite Map';
               logToHistory("Map hidden.");
               break;
@@ -3128,7 +3212,7 @@
               mapTileLayerSatellite.addTo(leafletMap);
               canvas.style.backgroundColor = 'transparent';
               canvasWrap.style.background = 'transparent';
-              toggleBtn.textContent = 'Show Street Map';
+              toggleBtn.textContent = '🗺️';
               toggleBtn.title = 'Switch to Street Map';
               logToHistory("Satellite map enabled.");
               break;
@@ -3136,13 +3220,14 @@
               mapTileLayerStreet.addTo(leafletMap);
               canvas.style.backgroundColor = 'transparent';
                canvasWrap.style.background = '#FFFFFF';
-              toggleBtn.textContent = 'Hide Map';
+              toggleBtn.textContent = '🚫';
               toggleBtn.title = 'Hide Map Tiles';
               logToHistory("Street map enabled.");
               break;
       }
       draw();
   }
+
   function updateStatusBar() { const t = (id, a) => document.getElementById(id).classList.toggle('active',a); t('gridToggle', state.grid); t('orthoToggle', state.ortho); t('osnapToggle', state.osnap); }
   function resize() { const r=canvas.parentElement.getBoundingClientRect(); canvas.width=r.width; canvas.height=r.height; if(leafletMap) leafletMap.invalidateSize(); draw(); }
   function updateTooltipPosition(e) { tooltip.style.left = `${e.clientX + 20}px`; tooltip.style.top = `${e.clientY + 20}px`; }
@@ -3360,13 +3445,84 @@
     });
   }
 
-  function exportToKmz() {
+    function exportToGeoJson(entitiesToExport, filename = 'export.geojson') {
+        logToHistory(`Exporting ${entitiesToExport.length} entities to GeoJSON...`);
+        
+        const worldToLatLng = (p_ft) => {
+            const dLat = p_ft.y / feetPerDegree.lat;
+            const dLng = p_ft.x / feetPerDegree.lng;
+            return L.latLng(cadOrigin.lat + dLat, cadOrigin.lng + dLng);
+        };
+
+        const geojson = {
+            "type": "FeatureCollection",
+            "features": []
+        };
+
+        entitiesToExport.forEach(ent => {
+            const layer = state.layers.find(l => l.name === ent.layer) || {};
+            if (!layer.visible) return;
+
+            let feature = {
+                "type": "Feature",
+                "geometry": null,
+                "properties": {
+                    "type": ent.type,
+                    "layer": ent.layer,
+                    ...ent.props
+                }
+            };
+            
+            if (ent.type === 'line') {
+                const a = worldToLatLng(ent.a);
+                const b = worldToLatLng(ent.b);
+                feature.geometry = { "type": "LineString", "coordinates": [[a.lng, a.lat], [b.lng, b.lat]] };
+            } else if (ent.type === 'polyline') {
+                const coords = ent.pts.map(p => { const ll = worldToLatLng(p); return [ll.lng, ll.lat]; });
+                if (ent.closed && coords.length > 3) {
+                    feature.geometry = { "type": "Polygon", "coordinates": [coords] };
+                } else {
+                    feature.geometry = { "type": "LineString", "coordinates": coords };
+                }
+            } else if (ent.type === 'circle') {
+                const segments = 64; 
+                let coords = [];
+                for (let i = 0; i <= segments; i++) {
+                    const angle = (i/segments) * 360;
+                    const pt = getDestinationPoint(ent.c, ent.r, angle);
+                    const ll = worldToLatLng(pt);
+                    coords.push([ll.lng, ll.lat]);
+                }
+                feature.geometry = { "type": "Polygon", "coordinates": [coords] };
+                feature.properties.radius = ent.r;
+            } else if (ent.type === 'text' || ent.type === 'mtext') {
+                const ll = worldToLatLng(ent.insertionPoint);
+                feature.geometry = { "type": "Point", "coordinates": [ll.lng, ll.lat] };
+                feature.properties.text = ent.textString;
+                feature.properties.height = ent.height;
+                feature.properties.rotation = ent.rotation;
+                if (ent.type === 'mtext') feature.properties.width = ent.width;
+            }
+            
+            if (feature.geometry) {
+                geojson.features.push(feature);
+            }
+        });
+        
+        const jsonString = JSON.stringify(geojson, null, 2);
+        const blob = new Blob([jsonString], {type: 'application/json'});
+        saveAs(blob, filename);
+    }
+
+
+  function exportToKmz(entitiesToExport, filename = 'export.kmz') {
       if(!window.JSZip){alert("JSZip library not found."); return;}
+       logToHistory(`Exporting ${entitiesToExport.length} entities to KMZ...`);
       const zip = new JSZip();
       let kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>`;
       state.layers.forEach(layer => { const kmlColor = "ff" + layer.color.substring(5, 7) + layer.color.substring(3, 5) + layer.color.substring(1, 3); kml += `<Style id="layer-${layer.name.replace(/\s/g, '_')}"><LineStyle><color>${kmlColor}</color><width>2</width></LineStyle><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-blank.png</href></Icon><hotSpot x="0.5" y="0.5" xunits="fraction" yunits="fraction"/></IconStyle></Style>`; });
 
-      state.ents.forEach(ent => {
+      entitiesToExport.forEach(ent => {
           const layer = state.layers.find(l => l.name === ent.layer) || state.layers[0]; if (!layer.visible) return;
           const styleUrl = `#layer-${layer.name.replace(/\s/g, '_')}`;
 
@@ -3403,13 +3559,12 @@
       kml += `</Document></kml>`;
       zip.file("doc.kml", kml);
       zip.generateAsync({type:"blob"}).then(function(content) {
-          saveAs(content, "export.kmz");
+          saveAs(content, filename);
       });
-      logToHistory("Exporting to KMZ...");
   }
 
-  function exportToDxf() {
-    logToHistory("Exporting to DXF... (Units = Feet)");
+  function exportToDxf(entitiesToExport, filename = 'export.dxf') {
+    logToHistory(`Exporting ${entitiesToExport.length} entities to DXF... (Units = Feet)`);
     
     class DxfWriter {
         constructor() { this.handleSeed = 100; this.dxf = []; }
@@ -3442,7 +3597,7 @@
     dxf.add(0, 'ENDSEC');
     dxf.add(0, 'SECTION'); dxf.add(2, 'ENTITIES');
 
-    state.ents.forEach(ent => {
+    entitiesToExport.forEach(ent => {
         const layer = state.layers.find(l => l.name === ent.layer);
         if (!layer || !layer.visible) return;
 
@@ -3472,8 +3627,58 @@
 
     const dxfString = dxf.toString();
     const blob = new Blob([dxfString], { type: 'application/dxf' });
-    saveAs(blob, 'export.dxf');
-    logToHistory("DXF export complete.");
+    saveAs(blob, filename);
+  }
+
+  function startDownloadManagerExport() {
+      const isSplit = document.getElementById('dl-split').checked;
+      const visibleEnts = state.ents.filter(ent => (state.layers.find(l => l.name === ent.layer) || {}).visible);
+      
+      let exportCount = 0;
+      const groups = {};
+      if (isSplit) {
+          visibleEnts.forEach(ent => {
+              if (!groups[ent.type]) groups[ent.type] = [];
+              groups[ent.type].push(ent);
+          });
+      }
+
+      const runExport = (exportFunc, fileExtension, baseFilename) => {
+          if (isSplit) {
+              for (const type in groups) {
+                  exportFunc(groups[type], `${baseFilename}-${type}s.${fileExtension}`);
+              }
+          } else {
+              exportFunc(visibleEnts, `${baseFilename}.${fileExtension}`);
+          }
+      };
+
+      if (document.getElementById('dl-gis').checked) {
+          logToHistory("GIS Shapefile export is not implemented. Please use GeoJSON for GIS applications.");
+          // Placeholder for future implementation
+      }
+      if (document.getElementById('dl-kmz').checked) {
+          runExport(exportToKmz, 'kmz', 'drawing-kmz');
+          exportCount++;
+      }
+      if (document.getElementById('dl-dxf').checked) {
+          runExport(exportToDxf, 'dxf', 'drawing-dxf');
+          exportCount++;
+      }
+      if (document.getElementById('dl-geojson').checked) {
+          runExport(exportToGeoJson, 'geojson', 'drawing-geojson');
+          exportCount++;
+      }
+      if (document.getElementById('dl-jobjson').checked) {
+          saveDrawing();
+          exportCount++;
+      }
+
+      if (exportCount === 0) {
+          logToHistory("No export formats selected.");
+      } else {
+          document.getElementById('downloadManagerModal').style.display = 'none';
+      }
   }
 
 
