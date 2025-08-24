@@ -547,14 +547,14 @@
       }
   }
 
-    function closestPointOnLineScreen(p, a, b) {
-        const atob = { x: b.x - a.x, y: b.y - a.y };
-        const atop = { x: p.x - a.x, y: p.y - a.y };
-        const len = atob.x * atob.x + atob.y * atob.y;
-        if (len === 0) return a;
-        let t = (atop.x * atob.x + atop.y * atob.y) / len;
-        t = Math.max(0, Math.min(1, t));
-        return { x: a.x + atob.x * t, y: a.y + atob.y * t, t: t };
+    function closestPointOnLineWorld(p_world, a_world, b_world) {
+        const atob = { x: b_world.x - a_world.x, y: b_world.y - a_world.y };
+        const atop = { x: p_world.x - a_world.x, y: p_world.y - a_world.y };
+        const len_sq = atob.x * atob.x + atob.y * atob.y;
+        if (len_sq < 1e-9) return a_world; // Avoid division by zero for tiny segments
+        let t = (atop.x * atob.x + atop.y * atob.y) / len_sq;
+        t = Math.max(0, Math.min(1, t)); // Clamp t to ensure the point is on the segment
+        return { x: a_world.x + atob.x * t, y: a_world.y + atob.y * t };
     }
 
     function intersectLineLineScreen(p1, p2, p3, p4, extendLines = false) {
@@ -1166,120 +1166,144 @@
   // =======================================================
 
   function startOffsetCommand() {
-      const cmd = state.activeCommand;
-      cmd.data = {};
+    const cmd = state.activeCommand;
+    cmd.data = {};
 
-      cmd.processInput = (input) => {
-          if (cmd.step === 0) {
-              const dist = parseFloat(input);
-              if (!isNaN(dist) && dist !== 0) {
-                  cmd.data.distance = Math.abs(dist); // Distance is in feet
-                  logToHistory(`Offset distance: ${Math.abs(dist)} ft`);
-                  setPrompt("Select object to offset:");
-                  cmd.step = 1;
-              } else {
-                  logToHistory(`Invalid distance "${input}".`);
-                  setPrompt("Specify offset distance (feet):");
-              }
-          }
-      };
+    cmd.processInput = (input) => {
+        if (cmd.step === 0) {
+            const dist = parseFloat(input);
+            if (!isNaN(dist) && dist !== 0) {
+                cmd.data.distance = Math.abs(dist); // Distance is in feet
+                logToHistory(`Offset distance: ${Math.abs(dist)} ft`);
+                setPrompt("Select object to offset:");
+                cmd.step = 1;
+            } else {
+                logToHistory(`Invalid distance "${input}".`);
+                setPrompt("Specify offset distance (feet):");
+            }
+        }
+    };
 
-      cmd.execute = () => {
-          if (cmd.step === 1) {
-              const hit = hitTest(getPointInput(true));
-              if (hit) {
-                  cmd.data.selectedEnt = hit;
-                  logToHistory("Object selected.");
-                  setPrompt("Specify point on side to offset:");
-                  cmd.step = 2;
-              }
-          } else if (cmd.step === 2) {
-              const sidePoint = getPointInput();
-              const sourceEnt = cmd.data.selectedEnt;
-              if (!sourceEnt) { cancelCommand(); return; }
+    cmd.execute = () => {
+        if (cmd.step === 1) {
+            const hit = hitTest(getPointInput(true));
+            if (hit) {
+                cmd.data.selectedEnt = hit;
+                logToHistory("Object selected.");
+                setPrompt("Specify point on side to offset:");
+                cmd.step = 2;
+            }
+        } else if (cmd.step === 2) {
+            const sidePoint = getPointInput();
+            const sourceEnt = cmd.data.selectedEnt;
+            if (!sourceEnt) { cancelCommand(); return; }
 
-              let newEnt = null;
+            let newEnt = null;
 
-              if (sourceEnt.type === 'circle') {
-                  const distToCenter = Math.hypot(sidePoint.x - sourceEnt.c.x, sidePoint.y - sourceEnt.c.y);
-                  const sign = distToCenter > sourceEnt.r ? 1 : -1;
-                  const newRadius = sourceEnt.r + (cmd.data.distance * sign);
+            if (sourceEnt.type === 'circle') {
+                const distToCenter = Math.hypot(sidePoint.x - sourceEnt.c.x, sidePoint.y - sourceEnt.c.y);
+                const sign = distToCenter > sourceEnt.r ? 1 : -1;
+                const newRadius = sourceEnt.r + (cmd.data.distance * sign);
 
-                  if (newRadius > 0) {
-                    newEnt = {
-                        type: 'circle', c: sourceEnt.c, r: newRadius,
-                        layer: sourceEnt.layer, props: { ...sourceEnt.props }
-                    };
-                  } else {
-                    logToHistory("Offset results in an invalid circle radius.");
-                  }
-              } else if (sourceEnt.type === 'line' || sourceEnt.type === 'polyline') {
-                  const isClosed = sourceEnt.closed || false;
-                  let pts_w = sourceEnt.type === 'line' ? [sourceEnt.a, sourceEnt.b] : [...sourceEnt.pts];
-                  if (isClosed && pts_w.length > 1 && pointsAreEqual(pts_w[0], pts_w[pts_w.length - 1])) {
-                      pts_w.pop();
-                  }
-                  if (pts_w.length < 2) { cancelCommand(); return; }
-                  
-                  // Determine offset side using world-space cross product
-                  const p1 = pts_w[0]; const p2 = pts_w[1];
-                  const cross_product = (p2.x - p1.x) * (sidePoint.y - p1.y) - (p2.y - p1.y) * (sidePoint.x - p1.x);
-                  const offset_angle_mod = cross_product > 0 ? -90 : 90;
+                if (newRadius > 0) {
+                  newEnt = {
+                      type: 'circle', c: sourceEnt.c, r: newRadius,
+                      layer: sourceEnt.layer, props: { ...sourceEnt.props }
+                  };
+                } else {
+                  logToHistory("Offset results in an invalid circle radius.");
+                }
+            } else if (sourceEnt.type === 'line' || sourceEnt.type === 'polyline') {
+                const isClosed = sourceEnt.closed || false;
+                let pts_w = sourceEnt.type === 'line' ? [sourceEnt.a, sourceEnt.b] : [...sourceEnt.pts];
+                if (isClosed && pts_w.length > 1 && pointsAreEqual(pts_w[0], pts_w[pts_w.length - 1])) {
+                    pts_w.pop();
+                }
+                if (pts_w.length < 2) { cancelCommand(); return; }
+                
+                // --- START: MODIFIED LOGIC TO FIND CORRECT OFFSET SIDE ---
+                let closest_seg_p1 = null;
+                let closest_seg_p2 = null;
+                let min_dist_sq = Infinity;
+                
+                // Loop through all segments to find the one closest to the user's click
+                for (let i = 0; i < pts_w.length; i++) {
+                    const current_p1 = pts_w[i];
+                    const current_p2 = pts_w[(i + 1) % pts_w.length];
+                    
+                    if (!isClosed && i === pts_w.length - 1) continue;
 
-                  const parallel_segments = [];
-                  for (let i = 0; i < (isClosed ? pts_w.length : pts_w.length - 1); i++) {
-                      const seg_p1 = pts_w[i];
-                      const seg_p2 = pts_w[(i + 1) % pts_w.length];
-                      const bearing = getBearing(seg_p1, seg_p2);
-                      const normal_bearing = (bearing + offset_angle_mod + 360) % 360;
-                      parallel_segments.push([
-                          getDestinationPoint(seg_p1, cmd.data.distance, normal_bearing),
-                          getDestinationPoint(seg_p2, cmd.data.distance, normal_bearing)
-                      ]);
-                  }
-                  
-                  if (parallel_segments.length === 0) { logToHistory("Could not offset object."); cancelCommand(); return; }
-                  
-                  const new_pts_w = [];
-                  if (!isClosed) { new_pts_w.push(parallel_segments[0][0]); }
+                    const closest_pt_on_seg = closestPointOnLineWorld(sidePoint, current_p1, current_p2);
+                    const dist_sq = (sidePoint.x - closest_pt_on_seg.x)**2 + (sidePoint.y - closest_pt_on_seg.y)**2;
 
-                  for (let i = 0; i < (isClosed ? parallel_segments.length : parallel_segments.length - 1); i++) {
-                      const seg1 = parallel_segments[i];
-                      const seg2 = parallel_segments[(i + 1) % parallel_segments.length];
-                      const intersection = intersectLineLineScreen(seg1[0], seg1[1], seg2[0], seg2[1], true);
-                      new_pts_w.push(intersection || seg1[1]);
-                  }
-                  
-                  if (!isClosed) {
-                      new_pts_w.push(parallel_segments[parallel_segments.length - 1][1]);
-                  } else if (new_pts_w.length > 0) {
-                      new_pts_w.push(new_pts_w[0]);
-                  }
+                    if (dist_sq < min_dist_sq) {
+                        min_dist_sq = dist_sq;
+                        closest_seg_p1 = current_p1;
+                        closest_seg_p2 = current_p2;
+                    }
+                }
 
-                  newEnt = { layer: sourceEnt.layer, props: { ...sourceEnt.props } };
-                  if (sourceEnt.type === 'line') {
-                      newEnt.type = 'line'; newEnt.a = new_pts_w[0]; newEnt.b = new_pts_w[1];
-                  } else {
-                      newEnt.type = 'polyline'; newEnt.pts = new_pts_w; newEnt.closed = isClosed;
-                  }
-              }
+                if (!closest_seg_p1) { logToHistory("Could not determine offset side."); cancelCommand(); return; }
 
-              if (newEnt) {
-                  pushEnt(newEnt);
-              } else if (!sourceEnt.type.match(/^(circle|line|polyline)$/)) {
-                  logToHistory("Offset for this entity type is not yet implemented.");
-              }
+                // Now, calculate the direction using the two points from the CLOSEST segment
+                const cross_product = (closest_seg_p2.x - closest_seg_p1.x) * (sidePoint.y - closest_seg_p1.y) - (closest_seg_p2.y - closest_seg_p1.y) * (sidePoint.x - closest_seg_p1.x);
+                const offset_angle_mod = cross_product > 0 ? -90 : 90;
+                // --- END: MODIFIED LOGIC ---
 
-              logToHistory("Offset complete.");
-              setPrompt("Select object to offset or press Enter to exit:");
-              cmd.data.selectedEnt = null;
-              cmd.step = 1;
-              draw();
-          }
-      };
-      
-      cmd.processSubCommand = (input) => { if (input.trim() === '') completeCommand(); }
-  }
+                const parallel_segments = [];
+                for (let i = 0; i < (isClosed ? pts_w.length : pts_w.length - 1); i++) {
+                    const seg_p1 = pts_w[i];
+                    const seg_p2 = pts_w[(i + 1) % pts_w.length];
+                    const bearing = getBearing(seg_p1, seg_p2);
+                    const normal_bearing = (bearing + offset_angle_mod + 360) % 360;
+                    parallel_segments.push([
+                        getDestinationPoint(seg_p1, cmd.data.distance, normal_bearing),
+                        getDestinationPoint(seg_p2, cmd.data.distance, normal_bearing)
+                    ]);
+                }
+                
+                if (parallel_segments.length === 0) { logToHistory("Could not offset object."); cancelCommand(); return; }
+                
+                const new_pts_w = [];
+                if (!isClosed) { new_pts_w.push(parallel_segments[0][0]); }
+
+                for (let i = 0; i < (isClosed ? parallel_segments.length : parallel_segments.length - 1); i++) {
+                    const seg1 = parallel_segments[i];
+                    const seg2 = parallel_segments[(i + 1) % parallel_segments.length];
+                    const intersection = intersectLineLineScreen(seg1[0], seg1[1], seg2[0], seg2[1], true);
+                    new_pts_w.push(intersection || seg1[1]);
+                }
+                
+                if (!isClosed) {
+                    new_pts_w.push(parallel_segments[parallel_segments.length - 1][1]);
+                } else if (new_pts_w.length > 0) {
+                    new_pts_w.push(new_pts_w[0]);
+                }
+
+                newEnt = { layer: sourceEnt.layer, props: { ...sourceEnt.props } };
+                if (sourceEnt.type === 'line') {
+                    newEnt.type = 'line'; newEnt.a = new_pts_w[0]; newEnt.b = new_pts_w[1];
+                } else {
+                    newEnt.type = 'polyline'; newEnt.pts = new_pts_w; newEnt.closed = isClosed;
+                }
+            }
+
+            if (newEnt) {
+                pushEnt(newEnt);
+            } else if (!sourceEnt.type.match(/^(circle|line|polyline)$/)) {
+                logToHistory("Offset for this entity type is not yet implemented.");
+            }
+
+            logToHistory("Offset complete.");
+            setPrompt("Select object to offset or press Enter to exit:");
+            cmd.data.selectedEnt = null;
+            cmd.step = 1;
+            draw();
+        }
+    };
+    
+    cmd.processSubCommand = (input) => { if (input.trim() === '') completeCommand(); }
+}
 
 
   function startFilletCommand() {
