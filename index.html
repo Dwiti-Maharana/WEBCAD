@@ -2571,27 +2571,76 @@
   }
 
   function onKeyDown(e) {
-  const activeEl = document.activeElement;
-  if (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA') return;
-  if (e.key === 'F2') { e.preventDefault(); toggleHistoryWindow(); }
-    if (e.key === 'Escape') {
-      hideContextMenu();
-      if (state.activeGrip) { cancelGripEdit(); }
-      else { cancelCommand(); }
-    }
-    if (e.key === 'F3') { e.preventDefault(); toggleState('osnap'); }
-    if (e.key === 'F7') { e.preventDefault(); toggleState('grid'); }
-    if (e.key === 'F8') { e.preventDefault(); toggleState('ortho'); }
-    if(e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
-    if(e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
-    if(e.ctrlKey && e.key === 'c') { e.preventDefault(); copyToClipboard(); }
-    if(e.ctrlKey && e.key === 'v') { e.preventDefault(); runCommand('paste'); }
+      const activeEl = document.activeElement;
+      // --- FIX: Only exit if an input OTHER THAN the main command line is active ---
+      if (activeEl && activeEl.tagName !== 'BODY' && activeEl.id !== 'cmd') {
+          return;
+      }
+      // --- END FIX ---
+      
+      // --- FIX: Added Ctrl+X for Cut ---
+      if (e.ctrlKey && e.key.toLowerCase() === 'x') {
+          e.preventDefault();
+          cutToClipboard();
+          return;
+      }
+      // --- END FIX ---
 
-    if(document.activeElement !== cmdInput) {
-        if(e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) { cmdInput.focus(); cmdInput.value += e.key; e.preventDefault();
-        } else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); runCommand(null); }
-    }
+      // --- FIX: Added specific check for Ctrl+C for Copy ---
+      if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+          e.preventDefault();
+          copyToClipboard();
+          return;
+      }
+      // --- END FIX ---
+      
+      // --- FIX: Added specific check for Ctrl+V for Paste ---
+      if (e.ctrlKey && e.key.toLowerCase() === 'v') {
+          e.preventDefault();
+          runCommand('paste');
+          return;
+      }
+      // --- END FIX ---
+      
+      // --- FIX: Added specific check for Ctrl+Z for Undo ---
+      if (e.ctrlKey && e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          undo();
+          return;
+      }
+      // --- END FIX ---
+
+      // --- FIX: Added specific check for Ctrl+Y for Redo ---
+      if (e.ctrlKey && e.key.toLowerCase() === 'y') {
+          e.preventDefault();
+          redo();
+          return;
+      }
+      // --- END FIX ---
+
+      if (e.key === 'F2') { e.preventDefault(); toggleHistoryWindow(); }
+      if (e.key === 'Escape') {
+        hideContextMenu();
+        if (state.activeGrip) { cancelGripEdit(); }
+        else if (state.selection.length > 0) { clearSelection(); }
+        else { cancelCommand(); }
+      }
+      if (e.key === 'F3') { e.preventDefault(); toggleState('osnap'); }
+      if (e.key === 'F7') { e.preventDefault(); toggleState('grid'); }
+      if (e.key === 'F8') { e.preventDefault(); toggleState('ortho'); }
+
+      if (document.activeElement !== cmdInput) {
+          if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+              cmdInput.focus();
+              cmdInput.value += e.key;
+              e.preventDefault();
+          } else if (e.key === ' ' || e.key === 'Enter') {
+              e.preventDefault();
+              runCommand(null); // Re-run last command
+          }
+      }
   }
+
   function toggleHistoryWindow() {
       const historyWindow = document.getElementById('historyWindow');
       const isVisible = historyWindow.style.display === 'flex';
@@ -3348,6 +3397,20 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
       logToHistory(`${state.selection.length} object(s) copied to clipboard.`);
   }
 
+  // --- NEW: Cut to Clipboard Function ---
+  function cutToClipboard() {
+      if (state.selection.length === 0) {
+          logToHistory("Nothing selected to cut.");
+          return;
+      }
+      // First, perform the copy operation
+      copyToClipboard();
+      // Then, delete the original selection
+      deleteSelection();
+      logToHistory("Cut operation complete.");
+  }
+
+
   function toggleState(mode) { state[mode] = !state[mode]; logToHistory(`${mode.toUpperCase()} <${state[mode] ? 'ON' : 'OFF'}>`); updateStatusBar(); draw(); }
   
   function toggleMap() {
@@ -3557,8 +3620,8 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
         console.error("File loading error:", e);
       }
   }
-  function undo() { if(state.history.length<=1)return; state.future.push(state.history.pop()); loadState(state.history[state.history.length-1]); }
-  function redo() { if(state.future.length===0)return; const s=state.future.pop(); state.history.push(s); loadState(s); }
+  function undo() { if(state.history.length<=1){logToHistory("Nothing to undo."); return;} state.future.push(state.history.pop()); loadState(state.history[state.history.length-1]); logToHistory("Undo.");}
+  function redo() { if(state.future.length===0){logToHistory("Nothing to redo."); return;} const s=state.future.pop(); state.history.push(s); loadState(s); logToHistory("Redo.");}
 
   function saveAs(blob, filename) {
       const link = document.createElement('a');
