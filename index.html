@@ -186,10 +186,48 @@
     color: var(--muted);
     white-space: pre-wrap; /* Allows text to wrap */
 }
+/* Block Editor Styles */
+#blockEditorToolbar {
+    position: fixed;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel);
+    border: 1px solid #4a5766;
+    border-radius: 10px;
+    padding: 8px 12px;
+    z-index: 50;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 5px 25px rgba(0,0,0,0.5);
+}
+#blockEditorToolbar span {
+    font-weight: bold;
+    color: #c0d2ff;
+}
+#blockEditorToolbar button {
+    border:1px solid #4a5766;
+    background:var(--panel2);
+    color:var(--text);
+    padding: 4px 10px;
+    border-radius:8px;
+    cursor:pointer
+}
+#blockEditorToolbar button:hover { background: #4e5a6e; }
 
 </style>
 </head>
 <body>
+
+  <!-- NEW: Block Editor Toolbar -->
+  <div id="blockEditorToolbar">
+      <span>Editing Block: <strong id="blockEditorName"></strong></span>
+      <div class="sep"></div>
+      <button id="saveBlockBtn">Save Block</button>
+      <button id="closeBlockEditorBtn">Close Editor</button>
+  </div>
+
   <div class="app">
     <div class="toolbar" id="toolbar">
        <!-- Drawing Commands -->
@@ -233,6 +271,11 @@
       <button data-command="imagetext" title="Image Text (IT)">🔤</button>
       <button data-command="maptocad" title="Map to CAD (MTC)">🗺️</button>
       <div class="sep"></div>
+      <!-- NEW: Block Commands -->
+      <button data-command="block" title="Create Block (B)">📦</button>
+      <button data-command="insert" title="Insert Block (I)">📥</button>
+      <button data-command="bedit" title="Block Editor (BE)">✏️</button>
+      <div class="sep"></div>
       
       <button id="undoBtn" title="Undo (Ctrl+Z)">↩️</button>
       <button id="redoBtn" title="Redo (Ctrl+Y)">↪️</button>
@@ -260,6 +303,16 @@
                 <div class="row"><label for="propLineweight">Lineweight</label><select id="propLineweight"></select></div>
                 <div class="row"><label for="propTransparency">Transparency</label><input type="number" id="propTransparency" value="0" min="0" max="90"></div>
                 <div class="row"><label for="propThickness">Thickness</label><input type="number" id="propThickness" value="0.0" step="0.1"></div>
+            </div>
+             <!-- Block-Specific Properties -->
+            <div class="prop-group" id="propBlock" style="display: none;">
+                <div class="row"><label for="propBlockType">Block</label><input type="text" id="propBlockType" readonly></div>
+                <div class="row"><label for="propBlockLayer">Layer</label><select id="propBlockLayer"></select></div>
+                <div class="row"><label for="propBlockColor">Color</label><input type="color" id="propBlockColor"></div>
+                <div class="row"><label for="propBlockLinetype">Linetype</label><select id="propBlockLinetype"></select></div>
+                <div class="row"><label for="propBlockScaleX">Scale X</label><input type="number" id="propBlockScaleX" value="1.0" step="0.1"></div>
+                <div class="row"><label for="propBlockScaleY">Scale Y</label><input type="number" id="propBlockScaleY" value="1.0" step="0.1"></div>
+                <div class="row"><label for="propBlockRotation">Rotation</label><input type="number" id="propBlockRotation" value="0" step="1"></div>
             </div>
             <!-- Text-Specific Properties -->
             <div class="prop-group" id="propText" style="display: none;">
@@ -409,16 +462,23 @@
   let isCvReady = false;
   const state = {
     ents: [],
+    // NEW: Block Definitions Storage
+    blockDefinitions: {},
     layers: [{name:'0', color:'#e6e9ef', visible:true, locked:false}],
     linetypes: [
         { name: 'ByLayer', pattern: [] },
+        // NEW: ByBlock linetype
+        { name: 'ByBlock', pattern: [] },
         { name: 'Continuous', pattern: [] },
         { name: 'Dashed', pattern: [10, 5] },
         { name: 'Dotted', pattern: [2, 4] },
         { name: 'Dash-Dot', pattern: [10, 5, 2, 5] },
     ],
     lineweights: [
-        'ByLayer', 'Default', '0.05', '0.09', '0.13', '0.15', '0.18', '0.20', '0.25', '0.30', '0.35', '0.40', '0.50', '0.60', '0.70', '0.80', '0.90', '1.00', '1.20', '1.50', '2.00'
+        'ByLayer', 
+        // NEW: ByBlock lineweight
+        'ByBlock',
+        'Default', '0.05', '0.09', '0.13', '0.15', '0.18', '0.20', '0.25', '0.30', '0.35', '0.40', '0.50', '0.60', '0.70', '0.80', '0.90', '1.00', '1.20', '1.50', '2.00'
     ],
     currentLayer: '0',
     selection: [],
@@ -445,7 +505,15 @@
     clipboard: { data: [], basePoint: null },
     isSelectionMode: false,
     viewHistory: [],
-    isZoomingProgrammatically: false
+    isZoomingProgrammatically: false,
+    // NEW: Block Editor State
+    blockEditor: {
+        isActive: false,
+        blockName: null,
+        originalEnts: [],
+        tempEnts: [],
+        basePoint: {x: 0, y: 0}
+    }
   };
   let nextId = 1;
 
@@ -471,7 +539,6 @@
       bindEvents();
       refreshLayersUI();
       updatePropertiesPanel();
-      updateStatusBar();
       snapshot();
       draw();
       cmdInput.focus();
@@ -502,20 +569,26 @@
   }
 
    function populateStaticSelects() {
-        const linetypeSelect = document.getElementById('propLinetype');
-        state.linetypes.forEach(lt => {
-            const opt = document.createElement('option');
-            opt.value = lt.name;
-            opt.textContent = lt.name;
-            linetypeSelect.appendChild(opt);
+        const linetypeSelects = document.querySelectorAll('#propLinetype, #propBlockLinetype');
+        linetypeSelects.forEach(select => {
+            select.innerHTML = ''; // Clear existing
+            state.linetypes.forEach(lt => {
+                const opt = document.createElement('option');
+                opt.value = lt.name;
+                opt.textContent = lt.name;
+                select.appendChild(opt);
+            });
         });
 
-        const lineweightSelect = document.getElementById('propLineweight');
-        state.lineweights.forEach(lw => {
-            const opt = document.createElement('option');
-            opt.value = lw;
-            opt.textContent = lw;
-            lineweightSelect.appendChild(opt);
+        const lineweightSelects = document.querySelectorAll('#propLineweight, #propBlockLineweight');
+        lineweightSelects.forEach(select => {
+            select.innerHTML = ''; // Clear existing
+            state.lineweights.forEach(lw => {
+                const opt = document.createElement('option');
+                opt.value = lw;
+                opt.textContent = lw;
+                select.appendChild(opt);
+            });
         });
     }
 
@@ -598,6 +671,8 @@
           ent.pts = ent.pts.map(transformFunc);
       } else if (ent.type === 'text' || ent.type === 'mtext') {
           ent.insertionPoint = transformFunc(ent.insertionPoint);
+      } else if (ent.type === 'block') {
+          ent.insertionPoint = transformFunc(ent.insertionPoint);
       }
   }
 
@@ -672,10 +747,18 @@
     'break': { alias: 'br', execute: startBreakCommand, prompt: "Select object to break:" },
     'lengthen': { alias: 'len', execute: startLengthenCommand, prompt: "Enter delta distance (feet):" },
     'array': { alias: 'ar', execute: startArrayCommand, prompt: "Enter number of rows:" },
-    'zoom': { alias: 'z', execute: startZoomCommand, prompt: "Enter an option [Extents/Window/Previous/Object]:" }
+    'zoom': { alias: 'z', execute: startZoomCommand, prompt: "Enter an option [Extents/Window/Previous/Object]:" },
+    // NEW: Block commands
+    'block': { alias: 'b', execute: startBlockCommand, prompt: "Enter block name:" },
+    'insert': { alias: 'i', execute: startInsertCommand, prompt: "Enter name of block to insert:" },
+    'bedit': { alias: 'be', execute: startBlockEditCommand, prompt: "Select a block to edit:" }
   };
 
   function runCommand(cmdStr) {
+    if (state.blockEditor.isActive && !['saveblock', 'closebedit'].includes(cmdStr)) {
+        logToHistory("Command not available in Block Editor. Use SAVEBLOCK or CLOSEBEDIT.");
+        return;
+    }
     cancelGripEdit();
     if (!cmdStr) { if(state.lastCommand) runCommand(state.lastCommand.name); return; }
     const args = cmdStr.toLowerCase().trim().split(' ');
@@ -1696,7 +1779,11 @@
                           if (ent.type === 'circle' && cmd.data.type === 'scale') {
                               ent.r *= scaleFactor;
                           }
-                          if ( (ent.type === 'text' || ent.type === 'mtext') && cmd.data.type === 'rotate') {
+                           if (ent.type === 'block' && cmd.data.type === 'scale') {
+                                ent.props.scaleX = (ent.props.scaleX || 1.0) * scaleFactor;
+                                ent.props.scaleY = (ent.props.scaleY || 1.0) * scaleFactor;
+                            }
+                          if ( (ent.type === 'text' || ent.type === 'mtext' || ent.type === 'block') && cmd.data.type === 'rotate') {
                              ent.rotation = (ent.rotation || 0) + (angleRad * 180 / Math.PI);
                           }
                       }
@@ -1827,25 +1914,63 @@
         if (state.selection.length === 0) { logToHistory("No objects selected."); completeCommand(); return; }
         let explodedCount = 0;
         const toDelete = [];
-        const newLines = [];
+        const newEnts = [];
         state.selection.forEach(id => {
             const ent = state.ents.find(e => e.id === id);
-            if (ent && ent.type === 'polyline' && ent.pts.length > 1) {
+            if (!ent) return;
+
+            if (ent.type === 'polyline' && ent.pts.length > 1) {
                 for (let i = 0; i < ent.pts.length - 1; i++) {
-                    newLines.push({ type: 'line', a: ent.pts[i], b: ent.pts[i + 1], layer: ent.layer, props: { ...ent.props } });
+                    newEnts.push({ type: 'line', a: ent.pts[i], b: ent.pts[i + 1], layer: ent.layer, props: { ...ent.props } });
                 }
                 toDelete.push(id);
                 explodedCount++;
+            } else if (ent.type === 'block') {
+                const blockDef = state.blockDefinitions[ent.name];
+                if (blockDef) {
+                    const angleRad = (ent.rotation || 0) * Math.PI / 180;
+                    const cosA = Math.cos(angleRad);
+                    const sinA = Math.sin(angleRad);
+                    
+                    blockDef.ents.forEach(blockEntDef => {
+                        const newEnt = JSON.parse(JSON.stringify(blockEntDef));
+                        delete newEnt.id;
+
+                        // Apply block instance properties to the new entities
+                        newEnt.layer = ent.layer; // Exploded ents go on the block's layer
+                        newEnt.props.color = ent.props.color || 'ByLayer';
+                        newEnt.props.linetype = ent.props.linetype || 'ByLayer';
+                        
+                        // Transform geometry from block space to world space
+                        const transformFunc = p => {
+                             // 1. Scale
+                            const scaledX = p.x * (ent.props.scaleX || 1.0);
+                            const scaledY = p.y * (ent.props.scaleY || 1.0);
+                            // 2. Rotate
+                            const rotatedX = scaledX * cosA - scaledY * sinA;
+                            const rotatedY = scaledX * sinA + scaledY * cosA;
+                            // 3. Translate
+                            return {
+                                x: rotatedX + ent.insertionPoint.x,
+                                y: rotatedY + ent.insertionPoint.y
+                            };
+                        };
+                        transformPoints(newEnt, transformFunc);
+                        newEnts.push(newEnt);
+                    });
+                    toDelete.push(id);
+                    explodedCount++;
+                }
             }
         });
 
         if (explodedCount > 0) {
             state.ents = state.ents.filter(e => !toDelete.includes(e.id));
-            newLines.forEach(l => pushEnt(l));
+            newEnts.forEach(e => pushEnt(e));
             snapshot();
             logToHistory(`${explodedCount} object(s) exploded.`);
         } else {
-            logToHistory("No polylines found in selection to explode.");
+            logToHistory("No polylines or blocks found in selection to explode.");
         }
         completeCommand();
     }
@@ -2271,9 +2396,14 @@
         
         if (state.selection.length === 1) {
             const ent = state.ents.find(e => e.id === state.selection[0]);
-            if (ent && (ent.type === 'text' || ent.type === 'mtext')) {
-                updateSelectedText(targetId, e.target.value);
-                return;
+            if (ent) {
+                if (ent.type === 'text' || ent.type === 'mtext') {
+                    updateSelectedText(targetId, e.target.value);
+                    return;
+                } else if (ent.type === 'block') {
+                    updateSelectedBlock(targetId, e.target.value);
+                    return;
+                }
             }
         }
         
@@ -2355,6 +2485,10 @@
     };
     document.getElementById('filterDownloadBtn').onclick = startDownloadManagerExport;
 
+    // NEW: Block Editor Event Handlers
+    document.getElementById('saveBlockBtn').onclick = saveBlockEdit;
+    document.getElementById('closeBlockEditorBtn').onclick = closeBlockEditor;
+
   }
 
   async function searchLocation() {
@@ -2397,21 +2531,44 @@
   }
 
   function onDblClick(e) {
-    if (state.activeCommand) return;
-    const worldPt = screenToWorld({x: state.mouse.x, y: state.mouse.y});
+    if (state.activeCommand) return; // Don't do anything if a command is active
+
+    const worldPt = screenToWorld({ x: state.mouse.x, y: state.mouse.y });
     const hit = hitTest(worldPt);
 
-    if (hit && (hit.type === 'text' || hit.type === 'mtext')) {
+    if (hit) {
+      if (hit.type === 'block') {
+          runCommand('bedit');
+          // Fake a selection to the bedit command
+          state.activeCommand.data.selectedBlock = hit;
+          state.activeCommand.execute();
+      } else if (hit.type === 'text' || hit.type === 'mtext') {
+        // First, clear any existing selection and select only the double-clicked text
         clearSelection();
         toggleSelect(hit.id, true);
+        
+        const entToEdit = state.ents.find(ent => ent.id === hit.id);
+        if (!entToEdit) return;
+
         if (hit.type === 'mtext') {
-            state.editingEnt = state.ents.find(ent => ent.id === hit.id);
+            state.editingEnt = entToEdit;
             const modal = document.getElementById('mtextModal');
             document.getElementById('mtextInput').value = state.editingEnt.textString;
             modal.style.display = 'flex';
+            document.getElementById('mtextInput').focus();
+
+        } else if (hit.type === 'text') {
+            const newText = prompt("Enter new text:", entToEdit.textString);
+            
+            if (newText !== null) {
+                entToEdit.textString = newText;
+                snapshot();
+                draw();
+            }
         }
+      }
     }
-  }
+}
 
   function onMouseDown(e) {
       state.mouse.isDown = true;
@@ -2662,18 +2819,18 @@
     ctx.clearRect(0,0,r.width,r.height);
 
     if(state.grid && mapState === 0) drawGrid();
-    for(const e of state.ents){
+    
+    const entitiesToDraw = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+    if (state.blockEditor.isActive) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+        ctx.fillRect(0, 0, r.width, r.height);
+    }
+    
+    for(const e of entitiesToDraw){
         const layer = state.layers.find(l=>l.name===e.layer) || {color:'#e6e9ef', visible:true};
         if(!layer.visible) continue;
         
-        const effectiveProps = {
-            color: (e.props && e.props.color && e.props.color !== 'ByLayer') ? e.props.color : layer.color,
-            linetype: (e.props && e.props.linetype && e.props.linetype !== 'ByLayer') ? e.props.linetype : 'Continuous',
-            lineweight: (e.props && e.props.lineweight && e.props.lineweight !== 'ByLayer') ? e.props.lineweight : 'Default',
-            linetypeScale: (e.props && e.props.linetypeScale) ? e.props.linetypeScale : 1.0,
-            transparency: (e.props && e.props.transparency) ? e.props.transparency : 0,
-        };
-        
+        const effectiveProps = getEffectiveProperties(e);
         drawEnt(e, effectiveProps, isSelected(e.id));
     }
 
@@ -2687,8 +2844,40 @@
     ctx.setLineDash([]);
     ctx.globalAlpha = 1.0;
   }
+  
+  // NEW: Get Effective Properties for AutoCAD-like property handling
+  function getEffectiveProperties(ent, blockInstanceProps = {}) {
+    const layer = state.layers.find(l => l.name === ent.layer) || state.layers.find(l => l.name === '0');
+
+    let color = (ent.props && ent.props.color) ? ent.props.color : 'ByLayer';
+    if (color === 'ByLayer') {
+        color = layer.color;
+    } else if (color === 'ByBlock') {
+        color = blockInstanceProps.color || layer.color;
+    }
+
+    let linetype = (ent.props && ent.props.linetype) ? ent.props.linetype : 'ByLayer';
+    if (linetype === 'ByLayer') {
+        linetype = 'Continuous'; // Simplified for now
+    } else if (linetype === 'ByBlock') {
+        linetype = blockInstanceProps.linetype || 'Continuous';
+    }
+
+    return {
+        color: color || '#e6e9ef',
+        linetype: linetype || 'Continuous',
+        lineweight: 'Default', // Simplified
+        linetypeScale: (ent.props && ent.props.linetypeScale) ? ent.props.linetypeScale : 1.0,
+        transparency: (ent.props && ent.props.transparency) ? ent.props.transparency : 0,
+    };
+}
+
 
   function drawEnt(e, props, selected) {
+    if (e.type === 'block') {
+        drawBlock(e, selected);
+        return;
+    }
     const lwValue = props.lineweight === 'Default' ? 1 : parseFloat(props.lineweight);
     let effectiveColor = props.color;
 
@@ -2708,14 +2897,11 @@
         ctx.setLineDash([]);
     }
 
-    // --- NEW HIGHLIGHTING LOGIC ---
-    // If the entity is selected, override its appearance to highlight it
     if (selected) {
-        ctx.strokeStyle = 'var(--accent)'; // A bright, consistent highlight color
-        ctx.lineWidth = lwValue + 1;       // Make it slightly thicker
-        ctx.setLineDash([5, 3]);           // Apply a dashed pattern
+        ctx.strokeStyle = 'var(--accent)'; 
+        ctx.lineWidth = lwValue + 1;
+        ctx.setLineDash([5, 3]);
     }
-    // --- END NEW LOGIC ---
 
     if (e.type === 'line') {
         ctx.beginPath();
@@ -2739,14 +2925,13 @@
         ctx.setLineDash([]); // Text should not be dashed
         const p_s = worldToScreen(e.insertionPoint);
 
-        // Use highlight color for text as well if selected
         ctx.fillStyle = selected ? 'var(--accent)' : `rgba(${r}, ${g}, ${b}, ${alpha})`;
 
         const p_top_world = { x: e.insertionPoint.x, y: e.insertionPoint.y + e.height };
         const p_top_screen = worldToScreen(p_top_world);
         const screenPixelHeight = distScreen(p_s, p_top_screen);
 
-        if (screenPixelHeight < 1) return; // Don't draw tiny text
+        if (screenPixelHeight < 1) return;
 
         ctx.font = `bold ${screenPixelHeight}px sans-serif`;
         ctx.textAlign = 'left';
@@ -2787,6 +2972,94 @@
         ctx.restore();
     }
 }
+  
+// FIXED: Function to draw a block instance with correct transformations
+function drawBlock(blockInstance, selected) {
+    const blockDef = state.blockDefinitions[blockInstance.name];
+    if (!blockDef) return;
+
+    // Get transform properties from the instance
+    const insertionPoint = blockInstance.insertionPoint;
+    const angleRad = (blockInstance.rotation || 0) * Math.PI / 180;
+    const cosA = Math.cos(angleRad);
+    const sinA = Math.sin(angleRad);
+    const scaleX = blockInstance.props.scaleX || 1.0;
+    const scaleY = blockInstance.props.scaleY || 1.0;
+    
+    // The layer of the block instance itself
+    const blockInstanceLayer = state.layers.find(l => l.name === blockInstance.layer) || state.layers[0];
+
+    // This function converts a point from the block's local coordinate system (in feet)
+    // to the main drawing's world coordinate system (also in feet).
+    const transformFunc = p => {
+        const scaledX = p.x * scaleX;
+        const scaledY = p.y * scaleY;
+        const rotatedX = scaledX * cosA - scaledY * sinA;
+        const rotatedY = scaledX * sinA + scaledY * cosA;
+        return {
+            x: rotatedX + insertionPoint.x,
+            y: rotatedY + insertionPoint.y
+        };
+    };
+
+    // Process each entity defined within the block
+    blockDef.ents.forEach(defEnt => {
+        // Create a deep copy to avoid modifying the original block definition
+        const worldEnt = JSON.parse(JSON.stringify(defEnt));
+        
+        // Apply the transformation to the entity's geometric points
+        transformPoints(worldEnt, transformFunc);
+        
+        // Handle properties that aren't simple points
+        if (worldEnt.type === 'circle') {
+            worldEnt.r *= Math.max(Math.abs(scaleX), Math.abs(scaleY));
+        }
+        if (worldEnt.type === 'text' || worldEnt.type === 'mtext') {
+            worldEnt.rotation = (worldEnt.rotation || 0) + (blockInstance.rotation || 0);
+            worldEnt.height *= Math.max(Math.abs(scaleY), Math.abs(scaleX));
+        }
+
+        // --- Determine the final, effective properties for drawing ---
+        const defEntLayer = state.layers.find(l => l.name === worldEnt.layer) || state.layers[0];
+        
+        let finalColor = worldEnt.props.color;
+        let finalLinetype = worldEnt.props.linetype;
+
+        if (finalColor === 'ByBlock') {
+            finalColor = blockInstance.props.color;
+        }
+        if (finalLinetype === 'ByBlock') {
+            finalLinetype = blockInstance.props.linetype;
+        }
+
+        if (finalColor === 'ByLayer') {
+            if (worldEnt.layer === '0') {
+                finalColor = blockInstanceLayer.color;
+            } else {
+                finalColor = defEntLayer.color;
+            }
+        }
+        if (finalLinetype === 'ByLayer') {
+             if (worldEnt.layer === '0') {
+                finalLinetype = 'Continuous'; 
+            } else {
+                finalLinetype = 'Continuous';
+            }
+        }
+        
+        const finalProps = {
+            ...worldEnt.props,
+            color: finalColor,
+            linetype: finalLinetype,
+        };
+        
+        // Call the main drawEnt function. This is safe because `worldEnt`
+        // is now a primitive with world coordinates.
+        drawEnt(worldEnt, finalProps, selected);
+    });
+}
+
+
   function drawSelectionBox() {
     if (!state.selectionBox || !state.selectionBox.start || !state.selectionBox.end) return;
 
@@ -3040,7 +3313,9 @@
       const mouseS = {x:state.mouse.x, y:state.mouse.y};
       let bestSnapW = null;
 
-      for(const ent of state.ents) {
+      const entitiesToSnap = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+
+      for(const ent of entitiesToSnap) {
           if (ent.type === 'line') {
               checkSnap(ent.a, 'endpoint'); checkSnap(ent.b, 'endpoint');
               const mid = {x: (ent.a.x+ent.b.x)/2, y: (ent.a.y+ent.b.y)/2}; checkSnap(mid, 'midpoint');
@@ -3059,11 +3334,22 @@
       state.snapPoint = bestSnapW;
   }
 
-  const pushEnt = (ent) => { if(!ent.id) ent.id=nextId++; state.ents.push(ent); snapshot(); return ent; };
+  const pushEnt = (ent) => { 
+    if(!ent.id) ent.id=nextId++; 
+    if (state.blockEditor.isActive) {
+        state.blockEditor.tempEnts.push(ent);
+    } else {
+        state.ents.push(ent); 
+        snapshot(); 
+    }
+    return ent; 
+  };
   const hitTest = (p) => {
     let best=null, bd = 8;
     const pS = worldToScreen(p);
-    for(const e of [...state.ents].reverse()){
+    const entitiesToTest = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+    
+    for(const e of [...entitiesToTest].reverse()){
       let d = Infinity;
       if(e.type==='line') { const aS=worldToScreen(e.a), bS=worldToScreen(e.b); const l2=(bS.x-aS.x)**2+(bS.y-aS.y)**2; if (l2===0){ d=distScreen(pS, aS);} else {let t=((pS.x-aS.x)*(bS.x-aS.x)+(pS.y-aS.y)*(bS.y-aS.y))/l2; t=clamp(t,0,1); d = distScreen(pS, {x:aS.x+t*(bS.x-aS.x), y:aS.y+t*(bS.y-aS.y)});}}
       else if(e.type==='circle') {
@@ -3089,6 +3375,10 @@
           if(pS.x >= textRect.x && pS.x <= textRect.x + textRect.width && pS.y >= textRect.y && pS.y <= textRect.y + textRect.height) {
               d = 0;
           }
+      } else if (e.type === 'block') {
+          // Simplified hit test for blocks: check distance to insertion point
+          const ipS = worldToScreen(e.insertionPoint);
+          d = distScreen(pS, ipS);
       }
       if(d<bd){ bd=d; best=e; }
     }
@@ -3107,7 +3397,21 @@
           draw();
       }
   }
-  const deleteSelection = () => { if (state.selection.length === 0) return; const count = state.selection.length; state.ents = state.ents.filter(e => !isSelected(e.id)); clearSelection(); snapshot(); logToHistory(`${count} object(s) erased.`); draw(); }
+  const deleteSelection = () => { 
+    if (state.selection.length === 0) return; 
+    const count = state.selection.length; 
+    
+    if (state.blockEditor.isActive) {
+        state.blockEditor.tempEnts = state.blockEditor.tempEnts.filter(e => !isSelected(e.id));
+    } else {
+        state.ents = state.ents.filter(e => !isSelected(e.id));
+        snapshot(); 
+    }
+    
+    clearSelection(); 
+    logToHistory(`${count} object(s) erased.`); 
+    draw(); 
+  }
 
   function isPointInRect(p, r) {
       return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
@@ -3143,7 +3447,7 @@
           const ent_r = { x: cS.x - rS, y: cS.y - rS, w: 2 * rS, h: 2 * rS };
           if (isCrossing) { return !(r.x > ent_r.x + ent_r.w || r.x + r.w < ent_r.x || r.y > ent_r.y + ent_r.h || r.y + r.h < ent_r.y); }
           else { return ent_r.x >= r.x && ent_r.x + ent_r.w <= r.x + r.w && ent_r.y >= r.y && ent_r.y + ent_r.h <= r.y + r.h; }
-      } else if (ent.type === 'text' || ent.type === 'mtext') {
+      } else if (ent.type === 'text' || ent.type === 'mtext' || ent.type === 'block') {
           const pS = worldToScreen(ent.insertionPoint);
           if (isCrossing) { return isPointInRect(pS, r); }
           else { return isPointInRect(pS, r); }
@@ -3154,7 +3458,8 @@
       const { start, end, type } = state.selectionBox;
       const rect = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), w: Math.abs(start.x - end.x), h: Math.abs(start.y - end.y) };
       const isCrossing = type === 'crossing';
-      for (const ent of state.ents) {
+      const entitiesToTest = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+      for (const ent of entitiesToTest) {
           if (isEntInSelectionBox(ent, rect, isCrossing)) { toggleSelect(ent.id, true); }
       }
   }
@@ -3170,8 +3475,9 @@
         const rect = { x: Math.min(start.x, end.x), y: Math.min(start.y, end.y), w: Math.abs(start.x - end.x), h: Math.abs(start.y - end.y) };
         const cmd = state.activeCommand;
         cmd.data.vertsToStretch = [];
+        const entitiesToTest = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
 
-        for (const ent of state.ents) {
+        for (const ent of entitiesToTest) {
             if(ent.type !== 'line' && ent.type !== 'polyline') continue;
             const grips = getGripsForEnt(ent);
             const verticesInWindow = [];
@@ -3205,6 +3511,7 @@
       if (ent.type === 'line') return [ent.a, ent.b];
       if (ent.type === 'polyline') return ent.pts;
       if (ent.type === 'text') return [ent.insertionPoint];
+      if (ent.type === 'block') return [ent.insertionPoint];
       if (ent.type === 'mtext') {
           const p2 = getDestinationPoint(ent.insertionPoint, ent.width, ent.rotation);
           return [ent.insertionPoint, p2];
@@ -3224,8 +3531,10 @@
   function gripHitTest(worldPt) {
       const gripScreenRadius = 8;
       const ptS = worldToScreen(worldPt);
+      const entitiesToTest = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+
       for (const id of state.selection) {
-          const ent = state.ents.find(e => e.id === id);
+          const ent = entitiesToTest.find(e => e.id === id);
           if (!ent) continue;
 
           const grips = getGripsForEnt(ent);
@@ -3240,7 +3549,8 @@
   }
 
   function startGripEdit(gripHit) {
-      const ent = state.ents.find(e => e.id === gripHit.entId);
+      const entitiesToEdit = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+      const ent = entitiesToEdit.find(e => e.id === gripHit.entId);
       if (!ent) return;
       state.activeGrip = {
           entId: gripHit.entId,
@@ -3256,16 +3566,17 @@
       if (!state.activeGrip) return;
       logToHistory("Grip edit finalized.");
       state.activeGrip = null;
-      snapshot();
+      if (!state.blockEditor.isActive) snapshot();
       setPrompt("Command: ");
       draw();
   }
 
   function cancelGripEdit() {
       if (!state.activeGrip) return;
-      const index = state.ents.findIndex(e => e.id === state.activeGrip.entId);
+      const entitiesToEdit = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+      const index = entitiesToEdit.findIndex(e => e.id === state.activeGrip.entId);
       if (index !== -1) {
-          state.ents[index] = state.activeGrip.originalEnt;
+          entitiesToEdit[index] = state.activeGrip.originalEnt;
       }
       logToHistory("*Cancel* Grip edit canceled.");
       state.activeGrip = null;
@@ -3283,17 +3594,17 @@
               ent.pts[0] = newPt;
               ent.pts[ent.pts.length - 1] = newPt;
           }
-      } else if (ent.type === 'text') {
+      } else if (ent.type === 'text' || ent.type === 'block') {
           if (ptIndex === 0) ent.insertionPoint = newPt;
       } else if (ent.type === 'mtext') {
-const p1 = ent.insertionPoint;
-const p2 = getDestinationPoint(p1, ent.width, 90);
-if(ptIndex === 0) { // Moving insertion point
-ent.insertionPoint = newPt;
-ent.width = L.latLng(newPt.y, newPt.x).distanceTo(L.latLng(p2.y, p2.x));
-} else { // Adjusting width
-ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
-}
+        const p1 = ent.insertionPoint;
+        const p2 = getDestinationPoint(p1, ent.width, 90);
+        if(ptIndex === 0) { // Moving insertion point
+        ent.insertionPoint = newPt;
+        ent.width = L.latLng(newPt.y, newPt.x).distanceTo(L.latLng(p2.y, p2.x));
+        } else { // Adjusting width
+        ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
+        }
       } else if (ent.type === 'circle') {
           if (ptIndex === 0) {
               ent.c = newPt;
@@ -3310,7 +3621,8 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
 
     function showContextMenu(x, y, gripHit) {
         contextMenu.innerHTML = ''; // Clear previous items
-        const ent = state.ents.find(e => e.id === gripHit.entId);
+        const entitiesToTest = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+        const ent = entitiesToTest.find(e => e.id === gripHit.entId);
         if (!ent) return;
 
         if (ent.type === 'polyline' && ent.pts.length > 1) {
@@ -3335,7 +3647,8 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
     }
 
     function addVertex(entId, ptIndex) {
-        const ent = state.ents.find(e => e.id === entId);
+        const entitiesToEdit = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+        const ent = entitiesToEdit.find(e => e.id === entId);
         if (!ent || ent.type !== 'polyline') return;
 
         let p1_idx, p2_idx;
@@ -3361,7 +3674,7 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
         ent.pts.splice(p2_idx, 0, newVertex);
 
         logToHistory("Vertex added to polyline.");
-        snapshot();
+        if (!state.blockEditor.isActive) snapshot();
         draw();
     }
 
@@ -3374,15 +3687,16 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
           logToHistory("Nothing selected to copy to clipboard.");
           return;
       }
+      const sourceEnts = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
       state.clipboard.data = state.selection.map(id => {
-          const ent = state.ents.find(e => e.id === id);
+          const ent = sourceEnts.find(e => e.id === id);
           return JSON.parse(JSON.stringify(ent));
       });
 
       // Calculate a base point from the selection's bounding box center
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for(const id of state.selection) {
-          const ent = state.ents.find(e => e.id === id);
+          const ent = sourceEnts.find(e => e.id === id);
           if(!ent) continue;
           const grips = getGripsForEnt(ent);
           for(const pt of grips) {
@@ -3403,9 +3717,7 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
           logToHistory("Nothing selected to cut.");
           return;
       }
-      // First, perform the copy operation
       copyToClipboard();
-      // Then, delete the original selection
       deleteSelection();
       logToHistory("Cut operation complete.");
   }
@@ -3456,101 +3768,111 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
   function hideTooltip() { tooltip.style.display = 'none'; }
 
   function updatePropertiesPanel() {
-      const genericProps = document.getElementById('propGeneric');
-      const textProps = document.getElementById('propText');
-      const propType = document.getElementById('propType');
-      
-      const layerSelects = [document.getElementById('propLayer'), document.getElementById('propTextLayer')];
-      layerSelects.forEach(select => {
-          select.innerHTML = '';
-          state.layers.forEach(l => {
-              const opt = document.createElement('option');
-              opt.value = l.name;
-              opt.textContent = l.name;
-              select.appendChild(opt);
-          });
-          select.value = state.currentLayer;
-      });
+    const genericProps = document.getElementById('propGeneric');
+    const textProps = document.getElementById('propText');
+    const blockProps = document.getElementById('propBlock'); // New
+    const propType = document.getElementById('propType');
 
-      const showGeneric = () => { genericProps.style.display = 'block'; textProps.style.display = 'none'; };
-      const showText = () => { genericProps.style.display = 'none'; textProps.style.display = 'block'; };
-      
-      if (state.selection.length === 1) {
-          const ent = state.ents.find(e => e.id === state.selection[0]);
-          if (ent && (ent.type === 'text' || ent.type === 'mtext')) {
-              showText();
-              document.getElementById('propTextType').value = ent.type.toUpperCase();
-              document.getElementById('propTextContent').value = ent.textString;
-              document.getElementById('propTextHeight').value = ent.height;
-              document.getElementById('propTextRotation').value = ent.rotation || 0;
-              document.getElementById('propTextLayer').value = ent.layer;
-              const layer = state.layers.find(l => l.name === ent.layer);
-              const effectiveColor = (ent.props && ent.props.color && ent.props.color !== 'ByLayer')
-                  ? ent.props.color
-                  : (layer ? layer.color : '#e6e9ef');
-              document.getElementById('propTextColor').value = effectiveColor;            
-              return;
-          }
-      }
-      
-      showGeneric();
-      propType.value = state.selection.length === 0 ? 'No selection' : `Multiple (${state.selection.length})`;
+    const layerSelects = document.querySelectorAll('#propLayer, #propTextLayer, #propBlockLayer');
+    layerSelects.forEach(select => {
+        const currentVal = select.value;
+        select.innerHTML = '';
+        state.layers.forEach(l => {
+            const opt = document.createElement('option');
+            opt.value = l.name;
+            opt.textContent = l.name;
+            select.appendChild(opt);
+        });
+        select.value = currentVal || state.currentLayer;
+    });
+    
+    
+    // Hide all panels initially
+    genericProps.style.display = 'none';
+    textProps.style.display = 'none';
+    blockProps.style.display = 'none';
+    const sourceEnts = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
 
-      if (state.selection.length === 0) {
-          document.getElementById('propColor').value = state.currentProperties.color;
-          document.getElementById('propLinetype').value = state.currentProperties.linetype;
-          document.getElementById('propLinetypeScale').value = state.currentProperties.linetypeScale;
-          document.getElementById('propLineweight').value = state.currentProperties.lineweight;
-          document.getElementById('propTransparency').value = state.currentProperties.transparency;
-          document.getElementById('propThickness').value = state.currentProperties.thickness;
-      } else {
-          // Simplified for multiple selection
-          const firstEnt = state.ents.find(e => e.id === state.selection[0]);
-          if (firstEnt) {
-              document.getElementById('propLayer').value = firstEnt.layer;
-              document.getElementById('propColor').value = firstEnt.props.color || '#ffffff';
-          }
-      }
-  }
+    if (state.selection.length === 1) {
+        const ent = sourceEnts.find(e => e.id === state.selection[0]);
+        if (ent) {
+            if (ent.type === 'text' || ent.type === 'mtext') {
+                textProps.style.display = 'block';
+                document.getElementById('propTextType').value = ent.type.toUpperCase();
+                document.getElementById('propTextContent').value = ent.textString;
+                document.getElementById('propTextHeight').value = ent.height;
+                document.getElementById('propTextRotation').value = ent.rotation || 0;
+                document.getElementById('propTextLayer').value = ent.layer;
+                document.getElementById('propTextColor').value = ent.props.color || '#e6e9ef';
+            } else if (ent.type === 'block') {
+                blockProps.style.display = 'block';
+                document.getElementById('propBlockType').value = ent.name;
+                document.getElementById('propBlockLayer').value = ent.layer;
+                document.getElementById('propBlockColor').value = ent.props.color || '#e6e9ef';
+                document.getElementById('propBlockLinetype').value = ent.props.linetype || 'ByLayer';
+                document.getElementById('propBlockScaleX').value = ent.props.scaleX || 1.0;
+                document.getElementById('propBlockScaleY').value = ent.props.scaleY || 1.0;
+                document.getElementById('propBlockRotation').value = ent.rotation || 0;
+            } else {
+                genericProps.style.display = 'block';
+                 propType.value = ent.type.charAt(0).toUpperCase() + ent.type.slice(1);
+            }
+        }
+    } else if (state.selection.length > 1) {
+        genericProps.style.display = 'block';
+        propType.value = `Multiple (${state.selection.length})`;
+    } else { // No selection
+        genericProps.style.display = 'block';
+        propType.value = 'No selection';
+        document.getElementById('propLayer').value = state.currentLayer;
+        document.getElementById('propColor').value = state.currentProperties.color;
+        document.getElementById('propLinetype').value = state.currentProperties.linetype;
+        document.getElementById('propLinetypeScale').value = state.currentProperties.linetypeScale;
+        document.getElementById('propLineweight').value = state.currentProperties.lineweight;
+        document.getElementById('propTransparency').value = state.currentProperties.transparency;
+        document.getElementById('propThickness').value = state.currentProperties.thickness;
+    }
+}
   
   function updateSelectedText(targetId, value) {
       if (state.selection.length !== 1) return;
-      const ent = state.ents.find(e => e.id === state.selection[0]);
+      const sourceEnts = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
+      const ent = sourceEnts.find(e => e.id === state.selection[0]);
       if (!ent || (ent.type !== 'text' && ent.type !== 'mtext')) return;
       
       switch (targetId) {
-          case 'propTextContent':
-              ent.textString = value;
-              break;
-          case 'propTextHeight':
-              const newWorldHeight = parseFloat(value);
-              if (!isNaN(newWorldHeight) && newWorldHeight > 0) {
-                  ent.height = newWorldHeight;
-              }
-              break;
-          case 'propTextRotation':
-              const newRotation = parseFloat(value);
-              if (!isNaN(newRotation)) {
-                  ent.rotation = newRotation;
-              }
-              break;
-          case 'propTextLayer':
-               ent.layer = value;
-               break;
-          case 'propTextColor':
-               if (!ent.props) ent.props = {};
-               ent.props.color = value;
-               break;
+          case 'propTextContent': ent.textString = value; break;
+          case 'propTextHeight': ent.height = parseFloat(value) || ent.height; break;
+          case 'propTextRotation': ent.rotation = parseFloat(value); break;
+          case 'propTextLayer': ent.layer = value; break;
+          case 'propTextColor': ent.props.color = value; break;
       }
-      snapshot();
+      if (!state.blockEditor.isActive) snapshot();
       draw();
   }
 
+  function updateSelectedBlock(targetId, value) {
+    if (state.selection.length !== 1) return;
+    const ent = state.ents.find(e => e.id === state.selection[0]);
+    if (!ent || ent.type !== 'block') return;
+
+    switch (targetId) {
+        case 'propBlockLayer': ent.layer = value; break;
+        case 'propBlockColor': ent.props.color = value; break;
+        case 'propBlockLinetype': ent.props.linetype = value; break;
+        case 'propBlockScaleX': ent.props.scaleX = parseFloat(value) || 1.0; break;
+        case 'propBlockScaleY': ent.props.scaleY = parseFloat(value) || 1.0; break;
+        case 'propBlockRotation': ent.rotation = parseFloat(value) || 0; break;
+    }
+    snapshot();
+    draw();
+  }
 
   function updateSelectedEnts(prop, value) {
       if (state.selection.length === 0) return;
+      const entsToUpdate = state.blockEditor.isActive ? state.blockEditor.tempEnts : state.ents;
       state.selection.forEach(id => {
-          const ent = state.ents.find(e => e.id === id);
+          const ent = entsToUpdate.find(e => e.id === id);
           if (!ent) return;
           if (prop === 'layer') {
               ent.layer = value;
@@ -3563,13 +3885,13 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
               }
           }
       });
-      snapshot();
+      if (!state.blockEditor.isActive) snapshot();
       draw();
   }
 
   function refreshLayersUI(){
       layersDiv.innerHTML = '';
-      const propLayerSelects = [document.getElementById('propLayer'), document.getElementById('propTextLayer')];
+      const propLayerSelects = document.querySelectorAll('#propLayer, #propTextLayer, #propBlockLayer');
       propLayerSelects.forEach(select => {
           select.innerHTML = '';
           state.layers.forEach(l => {
@@ -3603,13 +3925,14 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
   function curProps() {
       return { ...state.currentProperties };
   }
-  function snapshot(){ const s=JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer}); if (state.history[state.history.length-1] !== s) { state.history.push(s); if(state.history.length>50)state.history.shift(); state.future=[]; } }
+  function snapshot(){ const s=JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer, blockDefinitions: state.blockDefinitions}); if (state.history[state.history.length-1] !== s) { state.history.push(s); if(state.history.length>50)state.history.shift(); state.future=[]; } }
   function loadState(s) {
       try {
         const r = JSON.parse(s);
         state.ents=r.ents||[];
         state.layers=r.layers||[{name:'0',color:'#e6e9ef',visible:true,locked:false}];
         state.currentLayer=r.currentLayer||'0';
+        state.blockDefinitions = r.blockDefinitions || {};
         nextId=(state.ents.reduce((m,e)=>Math.max(m,e.id),0)||0)+1;
         refreshLayersUI();
         updateStatusBar();
@@ -3637,6 +3960,7 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
           ents: state.ents,
           layers: state.layers,
           currentLayer: state.currentLayer,
+          blockDefinitions: state.blockDefinitions
       };
       const jsonString = JSON.stringify(data, null, 2);
       const blob = new Blob([jsonString], {type: 'application/json'});
@@ -3772,9 +4096,10 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
                 coordsStr = coords.trim();
             }
             kml += coordsStr + `</coordinates></LineString></Placemark>`;
-          } else if (ent.type === 'text' || ent.type === 'mtext') {
+          } else if (ent.type === 'text' || ent.type === 'mtext' || ent.type === 'block') {
             const ll = worldToLatLng(ent.insertionPoint);
-            kml += `<Placemark><name>${escapeXml(ent.textString)}</name><styleUrl>${styleUrl}</styleUrl><Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point></Placemark>`;
+            const name = ent.type === 'block' ? ent.name : ent.textString;
+            kml += `<Placemark><name>${escapeXml(name)}</name><styleUrl>${styleUrl}</styleUrl><Point><coordinates>${ll.lng},${ll.lat},0</coordinates></Point></Placemark>`;
           }
       });
       kml += `</Document></kml>`;
@@ -3806,7 +4131,7 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
     dxf.add(9, '$ACADVER'); dxf.add(1, 'AC1009');
     dxf.add(9, '$INSUNITS'); dxf.add(70, 2); // 2 = Feet
     dxf.add(0, 'ENDSEC');
-    dxf.add(0, 'SECTION'); dxf.add(2, 'TABLES');
+     dxf.add(0, 'SECTION'); dxf.add(2, 'TABLES');
     dxf.add(0, 'TABLE'); dxf.add(2, 'LTYPE');
     dxf.add(0, 'LTYPE'); dxf.add(2, 'Continuous'); dxf.add(70, 64); dxf.add(3, 'Solid line'); dxf.add(72, 65); dxf.add(73, 0); dxf.add(40, 0.0);
     dxf.add(0, 'ENDTAB');
@@ -3816,6 +4141,29 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
     });
     dxf.add(0, 'ENDTAB');
     dxf.add(0, 'ENDSEC');
+    // NEW: Block Definitions Section
+    dxf.add(0, 'SECTION'); dxf.add(2, 'BLOCKS');
+    for (const blockName in state.blockDefinitions) {
+        const blockDef = state.blockDefinitions[blockName];
+        dxf.add(0, 'BLOCK');
+        dxf.add(2, blockName);
+        dxf.add(70, 0); // Flags
+        dxf.add(10, blockDef.basePoint.x); dxf.add(20, blockDef.basePoint.y); dxf.add(30, 0);
+        dxf.add(3, blockName);
+        
+        blockDef.ents.forEach(ent => {
+             // Simplified export of entities within blocks
+            if (ent.type === 'line') {
+                dxf.add(0, 'LINE'); dxf.add(8, ent.layer);
+                dxf.add(10, ent.a.x); dxf.add(20, ent.a.y);
+                dxf.add(11, ent.b.x); dxf.add(21, ent.b.y);
+            }
+        });
+
+        dxf.add(0, 'ENDBLK');
+    }
+    dxf.add(0, 'ENDSEC');
+
     dxf.add(0, 'SECTION'); dxf.add(2, 'ENTITIES');
 
     entitiesToExport.forEach(ent => {
@@ -3841,6 +4189,14 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
             dxf.add(40, ent.height);
             if (ent.rotation) dxf.add(50, ent.rotation);
             dxf.add(1, ent.textString);
+        } else if (ent.type === 'block') {
+            dxf.add(0, 'INSERT');
+            dxf.add(8, ent.layer);
+            dxf.add(2, ent.name);
+            dxf.add(10, ent.insertionPoint.x); dxf.add(20, ent.insertionPoint.y); dxf.add(30, 0);
+            if(ent.props.scaleX) dxf.add(41, ent.props.scaleX);
+            if(ent.props.scaleY) dxf.add(42, ent.props.scaleY);
+            if(ent.rotation) dxf.add(50, ent.rotation);
         }
     });
     dxf.add(0, 'ENDSEC');
@@ -3901,6 +4257,183 @@ ent.width = L.latLng(p1.y, p1.x).distanceTo(L.latLng(newPt.y, newPt.x));
           document.getElementById('downloadManagerModal').style.display = 'none';
       }
   }
+// =======================================================
+// NEW: BLOCK COMMANDS AND EDITOR LOGIC
+// =======================================================
+
+function startBlockCommand() {
+    if (state.selection.length === 0) {
+        logToHistory("No objects selected to create a block.");
+        completeCommand();
+        return;
+    }
+    const cmd = state.activeCommand;
+    cmd.processInput = (input) => {
+        const blockName = input.trim();
+        if (!blockName) {
+            logToHistory("Block name cannot be empty.");
+            return;
+        }
+        if (state.blockDefinitions[blockName]) {
+            logToHistory(`Block "${blockName}" already exists. Overwrite? [Yes/No]:`);
+            cmd.step = 2; // Ask for overwrite confirmation
+            cmd.data.blockName = blockName;
+            return;
+        }
+        cmd.data.blockName = blockName;
+        setPrompt("Specify insertion base point:");
+        cmd.step = 1;
+    };
+    cmd.execute = () => {
+        if (cmd.step === 1) { // Get base point
+            const basePoint = getPointInput();
+            if (basePoint) {
+                createBlock(cmd.data.blockName, basePoint);
+                completeCommand();
+            }
+        }
+    };
+}
+
+function createBlock(name, basePoint) {
+    const blockEnts = [];
+    const idsToDelete = [];
+    
+    // Create deep copies of selected entities and transform their coordinates to be relative to the base point
+    state.selection.forEach(id => {
+        const ent = state.ents.find(e => e.id === id);
+        if (ent) {
+            const newEnt = JSON.parse(JSON.stringify(ent));
+            const transformFunc = p => ({ x: p.x - basePoint.x, y: p.y - basePoint.y });
+            transformPoints(newEnt, transformFunc);
+            blockEnts.push(newEnt);
+            idsToDelete.push(id);
+        }
+    });
+
+    state.blockDefinitions[name] = {
+        name: name,
+        basePoint: { x: 0, y: 0 }, // Base point is now the origin of the block's coordinate system
+        ents: blockEnts
+    };
+
+    // Delete original entities
+    state.ents = state.ents.filter(e => !idsToDelete.includes(e.id));
+    
+    // Insert an instance of the new block
+    pushEnt({
+        type: 'block',
+        name: name,
+        insertionPoint: basePoint,
+        rotation: 0,
+        layer: state.currentLayer,
+        props: { ...curProps(), scaleX: 1.0, scaleY: 1.0 }
+    });
+
+    logToHistory(`Block "${name}" created.`);
+    snapshot();
+    clearSelection();
+    draw();
+}
+
+function startInsertCommand() {
+    const cmd = state.activeCommand;
+    cmd.processInput = (input) => {
+        const blockName = input.trim();
+        if (!state.blockDefinitions[blockName]) {
+            logToHistory(`Block "${blockName}" not found.`);
+            cancelCommand();
+            return;
+        }
+        cmd.data.blockName = blockName;
+        setPrompt("Specify insertion point:");
+        cmd.step = 1;
+    };
+    cmd.execute = () => {
+        if (cmd.step === 1) {
+            const insertionPoint = getPointInput();
+            if (insertionPoint) {
+                pushEnt({
+                    type: 'block',
+                    name: cmd.data.blockName,
+                    insertionPoint: insertionPoint,
+                    rotation: 0,
+                    layer: state.currentLayer,
+                    props: { ...curProps(), scaleX: 1.0, scaleY: 1.0 }
+                });
+                completeCommand();
+            }
+        }
+    };
+}
+
+function startBlockEditCommand() {
+    const cmd = state.activeCommand;
+    state.isSelectionMode = true;
+    cmd.execute = () => {
+        const hit = cmd.data.selectedBlock || hitTest(getPointInput(true));
+        if (hit && hit.type === 'block') {
+            const blockName = hit.name;
+            const blockDef = state.blockDefinitions[blockName];
+            if (!blockDef) {
+                logToHistory(`Block definition for "${blockName}" not found.`);
+                cancelCommand();
+                return;
+            }
+
+            state.blockEditor.isActive = true;
+            state.blockEditor.blockName = blockName;
+            state.blockEditor.originalEnts = JSON.parse(JSON.stringify(state.ents));
+            
+            // For editing, we don't need to offset coordinates, we edit them in place as if they were at 0,0
+            state.blockEditor.tempEnts = JSON.parse(JSON.stringify(blockDef.ents));
+            state.blockEditor.basePoint = blockDef.basePoint;
+
+            document.getElementById('blockEditorToolbar').style.display = 'flex';
+            document.getElementById('blockEditorName').textContent = blockName;
+            
+            logToHistory(`Entering Block Editor for block "${blockName}".`);
+            cancelCommand(); // Clear the BEDIT command itself
+            draw();
+        } else if (cmd.data.selectedBlock) {
+             // This case handles double-click where the block is already known
+        } else {
+            logToHistory("No block selected.");
+            cancelCommand();
+        }
+    };
+}
+
+
+function saveBlockEdit() {
+    if (!state.blockEditor.isActive) return;
+    const blockName = state.blockEditor.blockName;
+    
+    // Update the block definition with the edited entities
+    state.blockDefinitions[blockName].ents = JSON.parse(JSON.stringify(state.blockEditor.tempEnts));
+    
+    logToHistory(`Block definition "${blockName}" updated.`);
+    snapshot();
+    closeBlockEditor(false); // Close without restoring, as we are saving
+}
+
+function closeBlockEditor(restore = true) {
+    if (!state.blockEditor.isActive) return;
+    
+    if (restore) {
+        // Discard changes by doing nothing to the block definition
+        logToHistory(`Discarded changes to block "${state.blockEditor.blockName}".`);
+    }
+
+    state.blockEditor.isActive = false;
+    state.blockEditor.blockName = null;
+    state.blockEditor.tempEnts = [];
+    state.blockEditor.originalEnts = [];
+
+    document.getElementById('blockEditorToolbar').style.display = 'none';
+    logToHistory("Exited Block Editor.");
+    draw();
+}
 
 
   // Run the application
