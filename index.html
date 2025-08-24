@@ -534,12 +534,12 @@
   function init() {
       resize();
       initMap();
-      setCadOrigin(); // CRITICAL: Establish the local coordinate system
+      setCadOrigin(); // CRITICAL: Establishes the local coordinate system and loads data
       populateStaticSelects();
       bindEvents();
       refreshLayersUI();
       updatePropertiesPanel();
-      snapshot();
+      snapshot(); // Take initial snapshot AFTER potential data load
       draw();
       cmdInput.focus();
       document.getElementById('opencv-script').onload = () => {
@@ -566,6 +566,9 @@
       console.log("CAD Origin Set:", cadOrigin);
       console.log("Scale Factors (ft/degree):", feetPerDegree);
       logToHistory("Local coordinate system established in U.S. Survey Feet.");
+
+      // NEW: Load drawing for the new origin
+      loadDrawingFromStorage();
   }
 
    function populateStaticSelects() {
@@ -612,6 +615,67 @@
 
     leafletMap.on('move', draw);
     leafletMap.on('zoom', draw);
+  }
+
+  // =======================================================
+  // SECTION: LOCAL STORAGE PERSISTENCE
+  // =======================================================
+
+  function getStorageKey() {
+      if (!cadOrigin) return null;
+      // Round lat/lng to 4 decimal places to group nearby locations.
+      // This is approx ~11 meter precision.
+      const lat = cadOrigin.lat.toFixed(4);
+      const lng = cadOrigin.lng.toFixed(4);
+      return `miniCadDrawing_${lat}_${lng}`;
+  }
+
+  function saveDrawingToStorage() {
+      const key = getStorageKey();
+      if (!key) return;
+
+      const dataToSave = {
+          ents: state.ents,
+          layers: state.layers,
+          currentLayer: state.currentLayer,
+          blockDefinitions: state.blockDefinitions
+      };
+      const jsonString = JSON.stringify(dataToSave);
+
+      try {
+          localStorage.setItem(key, jsonString);
+      } catch (e) {
+          console.error("Could not save to local storage:", e);
+          logToHistory("Warning: Could not save drawing to browser storage. It may be full.");
+      }
+  }
+
+  function loadDrawingFromStorage() {
+      const key = getStorageKey();
+      if (!key) return;
+
+      const savedData = localStorage.getItem(key);
+
+      if (savedData) {
+          logToHistory("Found saved drawing for this location. Loading...");
+          // Reset history for the loaded drawing
+          state.history = [];
+          state.future = [];
+          loadState(savedData);
+          // An initial snapshot of the loaded state will be taken by init()
+      } else {
+          // If no data is found, clear the current drawing state to start fresh
+          logToHistory("No saved drawing found for this location.");
+          state.ents = [];
+          state.layers = [{name:'0', color:'#e6e9ef', visible:true, locked:false}];
+          state.blockDefinitions = {};
+          state.currentLayer = '0';
+          state.selection = [];
+          state.history = [];
+          state.future = [];
+          draw();
+          refreshLayersUI();
+      }
   }
 
   // =======================================================
@@ -2515,11 +2579,9 @@
 
               logToHistory(`Location found: ${result.display_name}`);
               leafletMap.setView([lat, lon], 17);
-              // CRITICAL: Reset the CAD origin when moving to a new location
+              // CRITICAL: Reset the CAD origin when moving to a new location.
+              // This will also trigger loadDrawingFromStorage() for the new location.
               setCadOrigin();
-              // Optional: clear existing drawing or ask user
-              // state.ents = [];
-              // draw();
               logToHistory("CAD origin reset to new location.");
           } else {
               logToHistory(`Could not find a location for "${query}".`);
@@ -3925,7 +3987,18 @@ function drawBlock(blockInstance, selected) {
   function curProps() {
       return { ...state.currentProperties };
   }
-  function snapshot(){ const s=JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer, blockDefinitions: state.blockDefinitions}); if (state.history[state.history.length-1] !== s) { state.history.push(s); if(state.history.length>50)state.history.shift(); state.future=[]; } }
+
+  function snapshot(){
+      const s = JSON.stringify({ents:state.ents, layers:state.layers, currentLayer: state.currentLayer, blockDefinitions: state.blockDefinitions});
+      if (state.history[state.history.length-1] !== s) {
+          state.history.push(s);
+          if(state.history.length > 50) state.history.shift();
+          state.future = [];
+      }
+      // NEW: Save to local storage on every change
+      saveDrawingToStorage();
+  }
+
   function loadState(s) {
       try {
         const r = JSON.parse(s);
@@ -3965,7 +4038,7 @@ function drawBlock(blockInstance, selected) {
       const jsonString = JSON.stringify(data, null, 2);
       const blob = new Blob([jsonString], {type: 'application/json'});
       saveAs(blob, 'drawing.json');
-      logToHistory("Drawing saved.");
+      logToHistory("Drawing saved as file.");
   }
 
   function openDrawing(event) {
@@ -3975,6 +4048,7 @@ function drawBlock(blockInstance, selected) {
       reader.onload = (e) => {
           const content = e.target.result;
           loadState(content);
+          // Snapshot will automatically save the new state to local storage for the current location
           snapshot();
       };
       reader.readAsText(file);
@@ -4204,7 +4278,7 @@ function drawBlock(blockInstance, selected) {
 
     const dxfString = dxf.toString();
     const blob = new Blob([dxfString], { type: 'application/dxf' });
-    saveAs(blob, filename);
+    saveAs(blob, dxfString);
   }
 
   function startDownloadManagerExport() {
