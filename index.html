@@ -820,7 +820,9 @@
     // NEW: Block commands
     'block': { alias: 'b', execute: startBlockCommand, prompt: "Enter block name:" },
     'insert': { alias: 'i', execute: startInsertCommand, prompt: "Enter name of block to insert:" },
-    'bedit': { alias: 'be', execute: startBlockEditCommand, prompt: "Select a block to edit:" }
+    'bedit': { alias: 'be', execute: startBlockEditCommand, prompt: "Select a block to edit:" },
+    // NEW: Selection command
+    'selectsimilar': { alias: 'ss', execute: startSelectSimilarCommand, prompt: "Select objects:" }
   };
 
   function runCommand(cmdStr) {
@@ -2419,6 +2421,108 @@
         logToHistory(`Array created (${rows}x${cols}).`);
     }
 
+    // =======================================================
+    // NEW: SELECT SIMILAR COMMAND
+    // =======================================================
+    function performSelectSimilar() {
+        if (state.selection.length === 0) return;
+
+        const sourceEnts = state.selection.map(id => state.ents.find(e => e.id === id)).filter(Boolean);
+        const newSelectionIds = new Set();
+
+        // Iterate through all entities in the drawing
+        for (const targetEnt of state.ents) {
+            // Skip if it's already selected
+            if (isSelected(targetEnt.id)) continue;
+
+            // Compare the target entity against each of the source entities
+            for (const sourceEnt of sourceEnts) {
+                let isSimilar = true;
+
+                // --- Similarity Criteria ---
+
+                // Must be the same type
+                if (sourceEnt.type !== targetEnt.type) {
+                    isSimilar = false;
+                }
+
+                // If same type, check type-specific properties
+                if (isSimilar) {
+                    switch (sourceEnt.type) {
+                        case 'block':
+                            // For blocks, name must match
+                            if (sourceEnt.name !== targetEnt.name) isSimilar = false;
+                            break;
+                        default:
+                            // For other types, check layer and color
+                            if (sourceEnt.layer !== targetEnt.layer) isSimilar = false;
+                            // Normalize 'undefined' props.color to 'ByLayer' for comparison
+                            const sourceColor = sourceEnt.props?.color || 'ByLayer';
+                            const targetColor = targetEnt.props?.color || 'ByLayer';
+                            if (sourceColor !== targetColor) isSimilar = false;
+                            break;
+                    }
+                }
+                
+                // If a match is found with any of the source objects, add it and stop checking this target
+                if (isSimilar) {
+                    newSelectionIds.add(targetEnt.id);
+                    break; // Move to the next targetEnt
+                }
+            }
+        }
+
+        if (newSelectionIds.size > 0) {
+            state.selection = [...state.selection, ...newSelectionIds];
+            logToHistory(`${newSelectionIds.size} similar object(s) added to selection.`);
+            updatePropertiesPanel();
+            draw();
+        } else {
+            logToHistory("No similar objects found.");
+        }
+    }
+
+    function startSelectSimilarCommand() {
+        // This helper function finishes the command WITHOUT clearing the selection.
+        const completeAndKeepSelection = () => {
+            state.activeCommand = null;
+            state.isSelectionMode = false;
+            setPrompt("Command: ");
+            // Notice: clearSelection() is intentionally NOT called here.
+            draw();
+        };
+
+        // Noun-verb: If objects are already selected, run immediately.
+        if (state.selection.length > 0) {
+            performSelectSimilar();
+            completeAndKeepSelection();
+            return;
+        }
+        
+        // Verb-noun: No selection, so start interactive selection.
+        const cmd = state.activeCommand;
+        state.isSelectionMode = true; 
+
+        cmd.execute = () => {
+            const hit = hitTest(getPointInput(true));
+            if (hit) {
+                toggleSelect(hit.id, !isSelected(hit.id));
+            }
+        };
+
+        // This runs when the user presses Enter after selecting objects.
+        cmd.processSubCommand = (input) => {
+            if (input.trim() === '') {
+                if (state.selection.length > 0) {
+                    performSelectSimilar();
+                } else {
+                    logToHistory("Nothing selected.");
+                }
+                completeAndKeepSelection();
+            }
+        };
+    }
+
   function getPointInput(isSelection=false) { if(state.snapPoint && !isSelection) return state.snapPoint; return {x: state.mouse.worldX, y: state.mouse.worldY }; }
 
 
@@ -3738,6 +3842,17 @@ function drawBlock(blockInstance, selected) {
                 btnCopyDxf.textContent = 'Copy for AutoCAD (DXF)';
                 btnCopyDxf.onclick = () => copyAsDxf();
                 contextMenu.appendChild(btnCopyDxf);
+                
+                contextMenu.appendChild(document.createElement('hr'));
+
+                const btnSelectSimilar = document.createElement('button');
+                btnSelectSimilar.textContent = 'Select Similar';
+                btnSelectSimilar.onclick = () => runCommand('selectsimilar');
+                contextMenu.appendChild(btnSelectSimilar);
+            }
+
+            if (contextMenu.children.length > 0) {
+                contextMenu.appendChild(document.createElement('hr'));
             }
 
             // Always show Paste options
